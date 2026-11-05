@@ -1,0 +1,26 @@
+# Sunucuda: docker compose up -d --build
+services:
+  blockify:
+    build: .
+    image: blockify:latest
+    container_name: blockify
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      DATA_DIR: /data
+      PORT: 8787
+      TRUST_PROXY: '1'
+    # Yalnızca sunucunun içinden erişilebilir; dışarıya nginx açar
+    ports:
+      - '127.0.0.1:8787:8787'
+    volumes:
+      - blockify-data:/data
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+
+volumes:
+  blockify-data:

@@ -111,7 +111,7 @@ export function Checkout() {
             <label htmlFor="pay-eft">
               <b>Havale / EFT</b>
               <span className="muted small">
-                Sipariş sonrası hesap bilgilerimizi göreceksin. Ödemen ulaşınca figürün hazırlanmaya başlar.
+                Sipariş sonrası ödeme bilgilerini sana ileteceğiz. Ödemen ulaşınca figürün hazırlanmaya başlar.
               </span>
             </label>
           </div>

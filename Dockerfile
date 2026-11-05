@@ -7,12 +7,17 @@ RUN npm run build
 
 FROM node:22-alpine
 WORKDIR /app
-ENV NODE_ENV=production
+ENV NODE_ENV=production \
+    DATA_DIR=/data \
+    PORT=8787
 COPY package*.json ./
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/dist-server ./dist-server
-ENV DATA_DIR=/data
+RUN mkdir -p /data && chown node:node /data
+USER node
 VOLUME ["/data"]
 EXPOSE 8787
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD wget -qO- http://127.0.0.1:8787/api/health || exit 1
 CMD ["node", "dist-server/index.js"]

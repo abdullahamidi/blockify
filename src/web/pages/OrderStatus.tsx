@@ -67,11 +67,19 @@ export function OrderStatusPage() {
           {order.status === 'awaiting_payment' && (
             <div className="card pay-card">
               <h2 className="ctl-title">Ödeme bilgileri</h2>
-              <p>
-                <b>{formatPrice(order.price.total, order.price.currency)}</b> tutarını aşağıdaki hesaba gönderirken açıklamaya sipariş
-                numaranı (<b>{order.number}</b>) yazmayı unutma.
-              </p>
-              {config && (
+              {config && !config.bank && (
+                <p>
+                  Toplam tutar <b>{formatPrice(order.price.total, order.price.currency)}</b>. Ödeme bilgilerini kısa süre içinde e-posta
+                  veya telefonla sana ileteceğiz. Ödeme yaparken açıklamaya sipariş numaranı (<b>{order.number}</b>) yazmayı unutma.
+                </p>
+              )}
+              {config?.bank && (
+                <p>
+                  <b>{formatPrice(order.price.total, order.price.currency)}</b> tutarını aşağıdaki hesaba gönderirken açıklamaya sipariş
+                  numaranı (<b>{order.number}</b>) yazmayı unutma.
+                </p>
+              )}
+              {config?.bank && (
                 <dl className="bank">
                   <dt>Banka</dt>
                   <dd>{config.bank.name}</dd>

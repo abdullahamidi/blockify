@@ -28,24 +28,33 @@ npm run typecheck
 
 Geliştirmede yönetim paneli anahtarı `dev-admin` (adres: `/admin`).
 
-## Üretim
+## Sunucuya kurulum (Contabo VPS ya da herhangi bir Ubuntu/Debian sunucu)
 
-```bash
-npm ci
-npm run build
-cp .env.example .env   # değerleri doldurun
-NODE_ENV=production ADMIN_TOKEN=... node dist-server/index.js
-```
+1. Alan adının DNS ayarlarına bir **A kaydı** ekleyin: `figur.ornek.com → sunucu IP`.
+2. Sunucuya root olarak bağlanıp:
 
-Tek bir Node süreci hem siteyi hem API'yi servis eder (varsayılan port 8787). Önüne nginx/Caddy konup domain bağlanabilir.
-Siparişler `DATA_DIR/orders.json` dosyasında, izinli fotoğraflar `DATA_DIR/photos/` altında tutulur; bu klasör kalıcı ve yedekli olmalı.
+   ```bash
+   git clone https://github.com/abdullahamidi/blockify.git /opt/blockify
+   cd /opt/blockify
+   DOMAIN=figur.ornek.com EMAIL=sen@ornek.com bash deploy/setup.sh
+   ```
 
-Docker ile:
+3. Betiğin sonunda yazan **yönetici anahtarını** saklayın (`/admin` girişi için; `.env` içinde de durur).
 
-```bash
-docker build -t blockify .
-docker run -d -p 8787:8787 -v blockify-data:/data --env-file .env blockify
-```
+Betik Docker'ı kurar, uygulamayı derleyip yalnızca `127.0.0.1:8787` üzerinde başlatır, nginx'e bu alan adı için ayrı bir site
+ekler (sunucudaki diğer sitelere dokunmaz), DNS sunucuyu gösteriyorsa Let's Encrypt SSL alır ve her gece veri yedeği için cron görevi kurar.
+Tekrar çalıştırmak güvenlidir. DNS henüz yayılmadıysa SSL adımını atlar; DNS hazır olunca betiği yeniden çalıştırmak yeterli.
+
+| İş | Komut |
+| --- | --- |
+| Güncelleme | `bash /opt/blockify/deploy/update.sh` |
+| Kayıtlar | `cd /opt/blockify && docker compose logs -f` |
+| Elle yedek | `bash /opt/blockify/deploy/backup.sh` (varsayılan `/root/blockify-backups`) |
+| Ayar değişikliği | `.env` dosyasını düzenleyip `docker compose up -d` |
+
+Havale/EFT bilgileri (`BANK_*`) boş bırakılırsa müşteriye "ödeme bilgilerini sana ileteceğiz" mesajı gösterilir.
+
+Docker olmadan: `npm ci && npm run build && NODE_ENV=production ADMIN_TOKEN=... node dist-server/index.js`
 
 ### Notlar
 

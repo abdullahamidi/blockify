@@ -36,11 +36,14 @@ export const config = {
   /** Yönetim paneli erişim anahtarı. Üretimde mutlaka uzun, rastgele bir değer verin. */
   adminToken: process.env.ADMIN_TOKEN || (isProd ? '' : 'dev-admin'),
   pricing: loadPricing(dataDir),
-  bank: {
-    name: process.env.BANK_NAME || 'Banka adı (ayarlanmadı)',
-    holder: process.env.BANK_HOLDER || 'Hesap sahibi (ayarlanmadı)',
-    iban: process.env.BANK_IBAN || 'TR00 0000 0000 0000 0000 0000 00',
-  },
+  /** Havale/EFT bilgileri. BANK_IBAN boşsa müşteriye "bilgileri ileteceğiz" mesajı gösterilir. */
+  bank: process.env.BANK_IBAN
+    ? {
+        name: process.env.BANK_NAME || '',
+        holder: process.env.BANK_HOLDER || '',
+        iban: process.env.BANK_IBAN,
+      }
+    : null,
   contactEmail: process.env.CONTACT_EMAIL || 'merhaba@example.com',
   /** Ters vekil (nginx, Cloudflare) arkasında gerçek IP için */
   trustProxy: process.env.TRUST_PROXY === '1',

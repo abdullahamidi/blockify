@@ -70,6 +70,6 @@ export interface PublicConfig {
   designFee: number;
   packaging: number;
   shipping: number;
-  bank: { name: string; holder: string; iban: string };
+  bank: { name: string; holder: string; iban: string } | null;
   contactEmail: string;
 }

@@ -1,0 +1,12 @@
+# Vekil Traefik ise: blockify'a yönlendirme etiketlerini ekler.
+# .env: PROXY_NETWORK, DOMAIN, (isteğe bağlı) TRAEFIK_ENTRYPOINT, TRAEFIK_CERTRESOLVER
+#   COMPOSE_FILE=docker-compose.yml:deploy/compose.proxy.yml:deploy/compose.traefik.yml
+services:
+  blockify:
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=${PROXY_NETWORK}
+      - traefik.http.routers.blockify.rule=Host(`${DOMAIN:?DOMAIN .env dosyasinda tanimli olmali}`)
+      - traefik.http.routers.blockify.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}
+      - traefik.http.routers.blockify.tls.certresolver=${TRAEFIK_CERTRESOLVER:-letsencrypt}
+      - traefik.http.services.blockify.loadbalancer.server.port=8787

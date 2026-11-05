@@ -1,0 +1,18 @@
+# Sunucuda 80/443 portlarını başka bir Docker ters vekili (nginx, Traefik, Caddy,
+# Nginx Proxy Manager...) tutuyorsa blockify'ı o vekilin Docker ağına bağlar.
+# Vekil içinden adres: http://blockify:8787
+#
+# Etkinleştirmek için .env dosyasına ekleyin:
+#   PROXY_NETWORK=<vekilin ağ adı>
+#   COMPOSE_FILE=docker-compose.yml:deploy/compose.proxy.yml
+# sonra: docker compose up -d
+services:
+  blockify:
+    networks:
+      - default
+      - proxy
+
+networks:
+  proxy:
+    external: true
+    name: ${PROXY_NETWORK:?PROXY_NETWORK .env dosyasinda tanimli olmali}

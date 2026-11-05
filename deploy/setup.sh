@@ -87,7 +87,24 @@ port80="$(ss -ltnpH 'sport = :80' 2>/dev/null || true)"
 if [ -n "$port80" ] && ! grep -q nginx <<<"$port80"; then
   warn "80 portunu nginx dışında bir program kullanıyor:"
   echo "$port80"
-  warn "Ters vekili o programda elle ayarlayın: $DOMAIN -> http://127.0.0.1:8787 (örnek: deploy/nginx-blockify.conf)"
+  proxy_ctr="$(docker ps --filter publish=80 --format '{{.Names}}' | head -n1)"
+  if [ -n "$proxy_ctr" ]; then
+    proxy_img="$(docker inspect -f '{{.Config.Image}}' "$proxy_ctr")"
+    proxy_nets="$(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$proxy_ctr")"
+    warn "Bu bir Docker ters vekili: $proxy_ctr ($proxy_img), ağ(lar): $proxy_nets"
+    cat <<EOF2
+
+Blockify'ı bu vekilin ağına bağlamak için:
+  echo "PROXY_NETWORK=${proxy_nets%% *}" >> $APP_DIR/.env
+  echo "COMPOSE_FILE=docker-compose.yml:deploy/compose.proxy.yml" >> $APP_DIR/.env
+  cd $APP_DIR && docker compose up -d
+
+Sonra vekilde $DOMAIN için yönlendirme ekleyin: http://blockify:8787
+(Ayrıntılar: README, "Sunucuda başka bir Docker vekili varsa")
+EOF2
+  else
+    warn "Ters vekili o programda elle ayarlayın: $DOMAIN -> http://127.0.0.1:8787 (örnek: deploy/nginx-blockify.conf)"
+  fi
   exit 0
 fi
 

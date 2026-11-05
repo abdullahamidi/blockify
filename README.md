@@ -52,6 +52,28 @@ Tekrar çalıştırmak güvenlidir. DNS henüz yayılmadıysa SSL adımını atl
 | Elle yedek | `bash /opt/blockify/deploy/backup.sh` (varsayılan `/root/blockify-backups`) |
 | Ayar değişikliği | `.env` dosyasını düzenleyip `docker compose up -d` |
 
+### Sunucuda başka bir Docker vekili varsa
+
+80/443 portlarını başka bir Docker konteyneri (ör. başka bir sitenin vekili) tutuyorsa `setup.sh` nginx'e dokunmadan durur ve
+vekilin adını ve ağını yazar. Önce blockify'ı o ağa bağlayın (`<ağ>` yerine betiğin yazdığı ağ adı):
+
+```bash
+cd /opt/blockify
+echo "PROXY_NETWORK=<ağ>" >> .env
+echo "COMPOSE_FILE=docker-compose.yml:deploy/compose.proxy.yml" >> .env
+docker compose up -d
+```
+
+Sonra vekilin türüne göre alan adını `http://blockify:8787` adresine yönlendirin:
+
+| Vekil | Yapılacak |
+| --- | --- |
+| nginx konteyneri | Vekilin ayar klasörüne `deploy/nginx-blockify.conf` benzeri bir `server` bloğu ekleyin, `proxy_pass http://blockify:8787;` olsun. Ardından `docker exec <vekil> nginx -t && docker exec <vekil> nginx -s reload` |
+| nginx-proxy + acme-companion | `.env` dosyasına `VIRTUAL_HOST=<alan adı>`, `VIRTUAL_PORT=8787`, `LETSENCRYPT_HOST=<alan adı>` ekleyip `docker compose up -d` |
+| Caddy | Caddyfile'a `<alan adı> { reverse_proxy blockify:8787 }` ekleyip `docker exec <vekil> caddy reload --config /etc/caddy/Caddyfile` |
+| Traefik | `.env` dosyasına `DOMAIN=<alan adı>` ekleyin, `COMPOSE_FILE` satırının sonuna `:deploy/compose.traefik.yml` ekleyin (gerekirse `TRAEFIK_ENTRYPOINT`, `TRAEFIK_CERTRESOLVER`), `docker compose up -d` |
+| Nginx Proxy Manager | Panelde (port 81) Proxy Hosts, Add: alan adı, `http`, host `blockify`, port `8787`; SSL sekmesinde yeni sertifika ve Force SSL |
+
 Havale/EFT bilgileri (`BANK_*`) boş bırakılırsa müşteriye "ödeme bilgilerini sana ileteceğiz" mesajı gösterilir.
 
 Docker olmadan: `npm ci && npm run build && NODE_ENV=production ADMIN_TOKEN=... node dist-server/index.js`

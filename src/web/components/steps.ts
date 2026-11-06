@@ -20,9 +20,27 @@ export function groupSteps(bricks: Brick[]): StepInfo[] {
   return out;
 }
 
-/** Bir katmandaki parçaların yüksekliği (plaka): en yüksek olanınki; v1 parçalarında `h` yoktur, 1 sayılır. */
-export function layerHeight(items: Brick[]): number {
-  return items.reduce((m, b) => Math.max(m, b.h ?? 1), 1);
+export interface HangingGroup {
+  y: number;
+  /** Gruptaki parçaların yüksekliği (plaka); v1 parçalarında `h` yoktur, 1 sayılır. */
+  h: number;
+  items: Brick[];
+}
+
+/**
+ * Asılı parçaları kat ve yüksekliğe göre gruplar. Aynı kattaki plaka `y + 1`, tuğla `y + 3` katının
+ * altına takıldığı için ayrı gösterilir. Üstten alta, aynı katta önce yüksek parçalar.
+ */
+export function hangingGroups(s: StepInfo): HangingGroup[] {
+  const map = new Map<string, HangingGroup>();
+  for (const b of s.hanging) {
+    const h = b.h ?? 1;
+    const key = `${b.y}:${h}`;
+    let g = map.get(key);
+    if (!g) map.set(key, (g = { y: b.y, h, items: [] }));
+    g.items.push(b);
+  }
+  return [...map.values()].sort((a, b) => b.y - a.y || b.h - a.h);
 }
 
 /**

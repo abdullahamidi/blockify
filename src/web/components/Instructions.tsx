@@ -3,7 +3,7 @@ import type { Brick } from '../../engine/packer';
 import { getColor, hexToRgb, FILLER_ID } from '../../engine/palette';
 import { getPart } from '../../engine/parts';
 import { LayerMap } from './LayerMap';
-import { groupSteps, hangingCaption, layerHeight, type StepInfo } from './steps';
+import { groupSteps, hangingCaption, hangingGroups, type StepInfo } from './steps';
 import { Viewer3D } from './Viewer3D';
 
 export function useSteps(bricks: Brick[]): StepInfo[] {
@@ -47,7 +47,6 @@ function StepParts({ items }: { items: Brick[] }) {
 }
 
 function StepBody({ bricks, s, cell }: { bricks: Brick[]; s: StepInfo; cell?: number }) {
-  const hangingLayers = [...new Set(s.hanging.map((b) => b.y))].sort((a, b) => b - a);
   return (
     <div className="step-body">
       <div className="step-maps">
@@ -57,15 +56,12 @@ function StepBody({ bricks, s, cell }: { bricks: Brick[]; s: StepInfo; cell?: nu
             <figcaption>{s.mainLayers.length === 1 ? 'Bu sırayı yerleştir' : `${i + 1}. kat`}</figcaption>
           </figure>
         ))}
-        {hangingLayers.map((y) => {
-          const items = s.hanging.filter((b) => b.y === y);
-          return (
-            <figure key={y}>
-              <LayerMap bricks={bricks} items={items} cell={cell} dashed />
-              <figcaption>{hangingCaption(s, y, layerHeight(items))}</figcaption>
-            </figure>
-          );
-        })}
+        {hangingGroups(s).map((g) => (
+          <figure key={`h${g.y}:${g.h}`}>
+            <LayerMap bricks={bricks} items={g.items} cell={cell} dashed />
+            <figcaption>{hangingCaption(s, g.y, g.h)}</figcaption>
+          </figure>
+        ))}
       </div>
       <StepParts items={[...s.main, ...s.hanging]} />
     </div>

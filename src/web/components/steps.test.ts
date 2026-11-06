@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Brick } from '../../engine/packer';
-import { groupSteps, hangingCaption, layerHeight } from './steps';
+import { groupSteps, hangingCaption, hangingGroups } from './steps';
 
 const mk = (id: number, y: number, step: number, hanging = false, h = 1): Brick =>
   ({ id, part: '2x2', color: 'red', x: 0, y, z: 0, sx: 2, sz: 2, h, step, hanging }) as Brick;
@@ -56,9 +56,28 @@ describe('hangingCaption', () => {
   });
 });
 
-describe('layerHeight', () => {
-  it('katmandaki en yüksek parçanın yüksekliği; v1 parçalarında 1', () => {
-    expect(layerHeight([mk(1, 0, 0, true, 1), mk(2, 0, 0, true, 3)])).toBe(3);
-    expect(layerHeight([{ id: 0, y: 1, step: 3, hanging: true }] as Brick[])).toBe(1);
+describe('hangingGroups', () => {
+  it('v2: aynı katta asılı plaka ve tuğla ayrı gruplanır, her biri kendi yüksekliğiyle açıklanır', () => {
+    // ana katlar [27, 28, 29]; 24. katta asılı tuğla (h=3) 27. kata, aynı kattaki plaka (h=1) 25. kata takılır
+    const s = groupSteps([mk(1, 27, 9), mk(2, 28, 9), mk(3, 24, 9, true, 3), mk(4, 24, 9, true, 1), mk(5, 26, 9, true, 1)])[0];
+    const g = hangingGroups(s);
+    expect(g.map((x) => [x.y, x.h, x.items.map((b) => b.id)])).toEqual([
+      [26, 1, [5]],
+      [24, 3, [3]],
+      [24, 1, [4]],
+    ]);
+    expect(g.map((x) => hangingCaption(s, x.y, x.h))).toEqual([
+      'Bunları 1. kattaki parçaların altına tak',
+      'Bunları 1. kattaki parçaların altına tak',
+      'Bunları 1. katın 3 plaka altına tak',
+    ]);
+  });
+  it('v1 parçalarında yükseklik 1 sayılır, aynı kattakiler tek grupta kalır', () => {
+    const s = groupSteps([
+      { id: 0, y: 3, step: 3, hanging: false },
+      { id: 1, y: 1, step: 3, hanging: true },
+      { id: 2, y: 1, step: 3, hanging: true },
+    ] as Brick[])[0];
+    expect(hangingGroups(s).map((g) => [g.y, g.h, g.items.length])).toEqual([[1, 1, 2]]);
   });
 });

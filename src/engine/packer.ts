@@ -368,21 +368,45 @@ function packAll(ctx: Ctx, seed: number, useBricks: boolean): Course[] {
 export function packBricks(grid: VoxelGrid, catalog: Catalog, attempts = 12): PackResult {
   const ctx = makeCtx(grid, catalog);
   const size = grid.w * grid.d;
-  let courses: Course[] | null = null;
-  let analysis: Analysis | null = null;
+  let best: Packing | null = null;
+  let bestBrick: Packing | null = null;
   for (let s = 0; s < attempts; s++) {
-    const trial = packAll(ctx, s, s % 3 !== 2);
-    const a = analyze(trial, size);
-    if (!analysis || cost(a) < cost(analysis)) {
-      courses = trial;
-      analysis = a;
-    }
+    const useBricks = s % 3 !== 2;
+    const courses = packAll(ctx, s, useBricks);
+    const trial = { courses, analysis: analyze(courses, size) };
+    if (!best || cost(trial.analysis) < cost(best.analysis)) best = trial;
+    if (useBricks && (!bestBrick || cost(trial.analysis) < cost(bestBrick.analysis))) bestBrick = trial;
   }
-  if (!courses || !analysis) throw new Error('En az bir deneme gerekir');
+  if (!best) throw new Error('En az bir deneme gerekir');
 
-  // Onarım: kopuk parça içeren kursları ve komşularını farklı tohumlarla yeniden döşe.
-  // Puan gürültüsü turdan tura REPAIR_JITTER içinde döner: küçük gürültü döşemeyi korur, büyük gürültü açgözlü
-  // seçimin dışına çıkar (ör. desteğin hepsini tek başına kaplayıp çıkıntıyı kopuk bırakan plaka).
+  // Kopukluk cezası parça sayısından çok büyüktür: onarılabilir tek kopuk parçası olan tuğlalı döşeme,
+  // iki kat parçalı ama bağlı bir yalnız-plaka döşemeye yenilir ve hiç onarılmazdı. Bu yüzden en iyi
+  // tuğlalı deneme de onarılır; seçim onarımdan sonraki maliyetle yapılır.
+  let result = repair(ctx, best, size);
+  if (bestBrick && bestBrick !== best) {
+    const alt = repair(ctx, bestBrick, size);
+    if (cost(alt.analysis) < cost(result.analysis)) result = alt;
+  }
+
+  return {
+    bricks: toBricks(result.courses, grid.w),
+    components: result.analysis.components,
+    looseBricks: result.analysis.total - result.analysis.mainSize,
+  };
+}
+
+interface Packing {
+  courses: Course[];
+  analysis: Analysis;
+}
+
+/**
+ * Onarım: kopuk parça içeren kursları ve komşularını farklı tohumlarla yeniden döşe.
+ * Puan gürültüsü turdan tura REPAIR_JITTER içinde döner: küçük gürültü döşemeyi korur, büyük gürültü açgözlü
+ * seçimin dışına çıkar (ör. desteğin hepsini tek başına kaplayıp çıkıntıyı kopuk bırakan plaka).
+ */
+function repair(ctx: Ctx, start: Packing, size: number): Packing {
+  let { courses, analysis } = start;
   const rng = mulberry32(12345);
   for (let iter = 0; iter < 200 && analysis.components > 1; iter++) {
     const candidates = new Set<number>();
@@ -397,19 +421,18 @@ export function packBricks(grid: VoxelGrid, catalog: Catalog, attempts = 12): Pa
     const useBricks = rng() >= 0.5;
     const trial = courses.slice();
     const jitter = REPAIR_JITTER[iter % REPAIR_JITTER.length];
-    trial[c] = packCourse(ctx, c, c > 0 ? trial[c - 1] : null, t, mulberry32(iter * 7919 + c), jitter, useBricks);
+    // Tek kurslu onarım 100 turda bitmediyse tek turlarda üstteki kurs da yeni kursun üstüne yeniden döşenir:
+    // bir kopukluğu gideren düzen bazen komşu kurstaki başka bir bağlantıyı koparır, ikisi birlikte değişmeli.
+    const span = iter >= 100 && iter % 2 === 1 && c + 1 < courses.length ? 2 : 1;
+    const r = mulberry32(iter * 7919 + c);
+    for (let k = c; k < c + span; k++) trial[k] = packCourse(ctx, k, k > 0 ? trial[k - 1] : null, t, r, jitter, useBricks);
     const a = analyze(trial, size);
     if (cost(a) < cost(analysis)) {
       courses = trial;
       analysis = a;
     }
   }
-
-  return {
-    bricks: toBricks(courses, grid.w),
-    components: analysis.components,
-    looseBricks: analysis.total - analysis.mainSize,
-  };
+  return { courses, analysis };
 }
 
 function toBricks(courses: Course[], w: number): Brick[] {

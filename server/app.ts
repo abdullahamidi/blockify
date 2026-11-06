@@ -1,15 +1,19 @@
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { existsSync } from 'node:fs';
 import { timingSafeEqual } from 'node:crypto';
-import { ENGINE_VERSION, generateModel } from '../src/engine/index';
+import { ENGINE_VERSION, SIZES, generateModel, priceFor, sanitizeDesign, type FigureSize } from '../src/engine/index';
 import {
   ORDER_STATUSES,
   type Order,
   type OrderStatus,
   type OrderSummary,
+  type PublicCatalog,
   type PublicConfig,
   type PublicOrder,
+  type QuoteResponse,
+  publicDesign,
 } from '../src/shared/orders';
+import type { CatalogStore } from './catalogStore';
 import type { config as appConfig } from './config';
 import type { OrderStore } from './store';
 import { ValidationError, parseJpegDataUrl, validateCustomer } from './validate';
@@ -38,7 +42,7 @@ function toPublic(o: Order): PublicOrder {
     number: o.number,
     createdAt: o.createdAt,
     status: o.status,
-    design: o.design,
+    design: publicDesign(o.design),
     price: { ...o.price, partsCost: 0 },
     stats: o.stats,
     history: o.history.map(({ at, status }) => ({ at, status })),
@@ -69,7 +73,7 @@ function safeEqual(a: string, b: string): boolean {
   return ab.length === bb.length && timingSafeEqual(ab, bb);
 }
 
-export function createApp(store: OrderStore, config: Config, staticDir?: string) {
+export function createApp(store: OrderStore, catalogs: CatalogStore, config: Config, staticDir?: string) {
   const app = express();
   app.disable('x-powered-by');
   if (config.trustProxy) app.set('trust proxy', 1);
@@ -93,10 +97,32 @@ export function createApp(store: OrderStore, config: Config, staticDir?: string)
     res.json(body);
   });
 
-  // Fiyat teklifi: tasarım sunucuda yeniden üretilir, istemcinin hesabına güvenilmez
-  api.post('/quote', rateLimit(120, 60_000), (req, res) => {
-    const model = generateModel(req.body?.design, config.pricing);
-    res.json({ design: model.design, price: { ...model.price, partsCost: 0 }, stats: model.stats });
+  api.get('/catalog', (_req, res) => {
+    const body: PublicCatalog = { version: catalogs.version(), enabled: [...catalogs.get().enabled] };
+    res.json(body);
+  });
+
+  // Fiyat teklifi: tasarım sunucuda yeniden üretilir, istemcinin hesabına güvenilmez.
+  // Üç boyutun da fiyatı döner; iç maliyet (partsCost) gizlenir.
+  api.post('/quote', rateLimit(300, 60_000), (req, res) => {
+    const catalog = catalogs.get();
+    const design = sanitizeDesign(req.body?.design, catalog);
+    const models = {} as Record<FigureSize, ReturnType<typeof generateModel>>;
+    const prices = {} as Record<FigureSize, ReturnType<typeof priceFor>>;
+    const sizes = {} as QuoteResponse['sizes'];
+    for (const size of SIZES) {
+      const m = generateModel({ ...design, size }, catalog);
+      models[size] = m;
+      prices[size] = priceFor(m.bom, config.pricing);
+      sizes[size] = { total: prices[size].total, heightMm: m.stats.heightMm, brickCount: m.stats.brickCount };
+    }
+    const body: QuoteResponse = {
+      design,
+      price: { ...prices[design.size], partsCost: 0 },
+      stats: models[design.size].stats,
+      sizes,
+    };
+    res.json(body);
   });
 
   api.post('/orders', rateLimit(10, 10 * 60_000), async (req, res, next) => {
@@ -108,7 +134,8 @@ export function createApp(store: OrderStore, config: Config, staticDir?: string)
       const photoConsent = body.consent?.photo === true;
       const photo = photoConsent ? parseJpegDataUrl(body.photo) : null;
 
-      const model = generateModel(body.design, config.pricing);
+      const model = generateModel(body.design, catalogs.get());
+      const price = priceFor(model.bom, config.pricing);
       if (model.stats.looseBricks > 0) throw new ValidationError('Bu tasarım üretilemiyor, lütfen değiştirin');
 
       const now = new Date().toISOString();
@@ -120,7 +147,7 @@ export function createApp(store: OrderStore, config: Config, staticDir?: string)
         status: 'awaiting_payment',
         engineVersion: ENGINE_VERSION,
         design: model.design,
-        price: model.price,
+        price,
         stats: model.stats,
         bom: model.bom,
         bricks: model.bricks,
@@ -155,7 +182,7 @@ export function createApp(store: OrderStore, config: Config, staticDir?: string)
   // Montaj kılavuzu için parça yerleşimi
   api.get('/orders/:number/build', (req, res) => {
     const o = findWithKey(req, res);
-    if (o) res.json({ number: o.number, design: o.design, bricks: o.bricks, bom: o.bom, stats: o.stats });
+    if (o) res.json({ number: o.number, design: publicDesign(o.design), bricks: o.bricks, bom: o.bom, stats: o.stats });
   });
 
   // ---- Yönetim ----

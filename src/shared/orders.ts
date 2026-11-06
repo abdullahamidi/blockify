@@ -1,4 +1,4 @@
-import type { FigureDesign } from '../engine/figure';
+import type { FigureDesign, FigureSize } from '../engine/figure';
 import type { BomLine } from '../engine/bom';
 import type { Brick } from '../engine/packer';
 import type { PriceBreakdown } from '../engine/pricing';
@@ -54,11 +54,21 @@ export interface Order {
   history: OrderHistoryEntry[];
 }
 
+/** Herkese açık yanıtlarda yüz ölçüleri ve ifade (kişisel stil verisi) bulunmaz. */
+export type PublicDesign = Omit<FigureDesign, 'face' | 'expression'>;
+
+/** v1 biçimli eski tasarımlarda bu alanlar yoktur; bu durumda da hata vermez. */
+export function publicDesign(d: FigureDesign): PublicDesign {
+  const { face: _face, expression: _expression, ...rest } = d;
+  return rest;
+}
+
 /** Müşterinin sipariş takip sayfasında gördüğü alanlar */
-export type PublicOrder = Pick<
-  Order,
-  'number' | 'createdAt' | 'status' | 'design' | 'price' | 'stats' | 'history' | 'carrier' | 'trackingNo'
-> & { customerName: string; city: string };
+export type PublicOrder = Pick<Order, 'number' | 'createdAt' | 'status' | 'price' | 'stats' | 'history' | 'carrier' | 'trackingNo'> & {
+  design: PublicDesign;
+  customerName: string;
+  city: string;
+};
 
 export type OrderSummary = Pick<Order, 'number' | 'createdAt' | 'status' | 'price' | 'stats' | 'hasPhoto' | 'trackingNo'> & {
   customerName: string;
@@ -72,4 +82,16 @@ export interface PublicConfig {
   shipping: number;
   bank: { name: string; holder: string; iban: string } | null;
   contactEmail: string;
+}
+
+export interface PublicCatalog {
+  version: string;
+  enabled: string[];
+}
+
+export interface QuoteResponse {
+  design: FigureDesign;
+  price: PriceBreakdown;
+  stats: ModelStats;
+  sizes: Record<FigureSize, { total: number; heightMm: number; brickCount: number }>;
 }

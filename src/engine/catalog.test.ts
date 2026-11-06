@@ -36,4 +36,12 @@ describe('parça kataloğu', () => {
     expect(nearestEnabledColor(c, 'darkGray')).toBe('black');
     expect(nearestEnabledColor(c, 'white')).toBe('white');
   });
+  it('opak renk için şeffaf renk seçilmez', () => {
+    const c = createCatalog(['p1x1|transClear', 'p1x1|lightGray', 'p1x1|black']);
+    expect(nearestEnabledColor(c, 'white')).toBe('lightGray');
+    // Grupta yalnızca şeffaf olmayan aday (black) kalır
+    expect(nearestEnabledColor(c, 'white', 'detail')).toBe('black');
+    // Hiç opak açık renk yoksa kaynak aynen döner (döşeyici eksik p1x1'i bildirir)
+    expect(nearestEnabledColor(createCatalog(['p1x1|transClear']), 'white')).toBe('white');
+  });
 });

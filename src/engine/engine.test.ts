@@ -14,6 +14,7 @@ import {
   createCatalog,
   defaultCatalog,
   generateModel,
+  getColor,
   getPart,
   headDims,
   priceFor,
@@ -106,12 +107,13 @@ describe('generateModel', () => {
     for (const b of m.bricks) if (b.color !== FILLER_ID) expect(keys).toContain(catalogKey(b.part, b.color));
   });
 
-  it('katalogda olmayan sabit yüz renkleri en yakın açık renge döner', () => {
-    // Beyaz kapalı: ayakkabı (tasarım rengi) ve göz akı / dişler (sabit renk) başka renge döner.
+  it('katalogda olmayan sabit yüz renkleri en yakın açık (opak) renge döner', () => {
+    // Beyaz kapalı: ayakkabı (tasarım rengi) ve göz akı / dişler (sabit renk) başka renge döner, şeffafa değil.
     const keys = [...defaultCatalog().enabled].filter((k) => !k.endsWith('|white'));
     const m = generateModel({ size: 'M', expression: { smile: 3 } }, createCatalog(keys));
     expect(m.stats.components).toBe(1);
     expect(m.bricks.some((b) => b.color === 'white')).toBe(false);
+    expect(m.bricks.filter((b) => b.color !== FILLER_ID && getColor(b.color).transparent)).toEqual([]);
     for (const b of m.bricks) if (b.color !== FILLER_ID) expect(keys).toContain(catalogKey(b.part, b.color));
   });
 

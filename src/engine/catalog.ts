@@ -86,13 +86,19 @@ export function catalogProblems(c: Catalog): string[] {
   return problems;
 }
 
-/** Renk açıksa kendisi, değilse Lab uzaklığı en yakın açık renk. */
+/**
+ * Renk açıksa kendisi, değilse Lab uzaklığı en yakın açık renk.
+ * Opak renk için şeffaf aday seçilmez; hiç opak açık renk yoksa renk aynen döner.
+ */
 export function nearestEnabledColor(c: Catalog, colorId: string, group?: ColorGroup): string {
   const open = enabledColors(c);
-  if (open.includes(colorId) || open.length === 0) return colorId;
-  let candidates = open;
+  if (open.includes(colorId)) return colorId;
+  const opaqueSource = !getColor(colorId).transparent;
+  const allowed = opaqueSource ? open.filter((id) => !getColor(id).transparent) : open;
+  if (allowed.length === 0) return colorId;
+  let candidates = allowed;
   if (group) {
-    const inGroup = open.filter((id) => getColor(id).groups.includes(group));
+    const inGroup = allowed.filter((id) => getColor(id).groups.includes(group));
     if (inGroup.length > 0) candidates = inGroup;
   }
   const target = rgbToLab(hexToRgb(getColor(colorId).hex));

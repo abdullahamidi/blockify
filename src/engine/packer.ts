@@ -1,22 +1,24 @@
-import { FILLER_ID } from './palette';
-import { PARTS, partForFootprint } from './parts';
+import { type Catalog, footprints, isEnabled } from './catalog';
+import { partForFootprint } from './parts';
 import { EMPTY, VoxelGrid, WILDCARD, colorIdFromCode } from './voxels';
 
 export interface Brick {
   id: number;
-  part: string; // "2x4" gibi
+  part: string; // "2x4", "p1x2" gibi
   color: string; // palet renk kimliği ya da "filler"
   x: number; // en küçük köşe
-  y: number; // katman
+  y: number; // v2: parçanın en alt plaka katı (v1: tuğla katmanı)
   z: number;
   sx: number; // x yönündeki uzunluk (stud)
   sz: number; // z yönündeki uzunluk (stud)
-  /** Montaj adımı: parçanın takıldığı katman. Asılı parçalar üstteki katmanla birlikte takılır. */
+  /** Yükseklik (plaka): tuğla 3, plaka 1. v1 siparişlerinde yoktur. */
+  h?: number;
+  /** Montaj adımı: parçanın takıldığı tuğla kursu. Asılı parçalar üstteki parçayla birlikte takılır. */
   step: number;
-  /** Altında destek yok; bir üst katmandaki parçanın altına takılır. */
+  /** Altında destek yok; üstteki parçanın altına takılır. */
   hanging: boolean;
-  /** Tuğla yerine ince plaka (kaide) */
-  plate?: boolean;
+  /** Yalnızca kaide plakası */
+  plate?: true;
 }
 
 export interface PackResult {
@@ -39,11 +41,18 @@ function mulberry32(seed: number): () => number {
   };
 }
 
-interface RawBrick {
+type Kind = 'brick' | 'plate';
+
+/** Bir tuğla 3 plaka yüksekliğindedir; katlar 3'erli kurslara bölünür. */
+const COURSE = 3;
+
+interface RawPart {
   x: number;
+  y: number; // en alt kat
   z: number;
   sx: number;
   sz: number;
+  h: 1 | 3;
   code: number; // renk kodu ya da WILDCARD
 }
 
@@ -54,51 +63,91 @@ interface Transform {
   flipV: boolean;
 }
 
-const FOOTPRINTS: Array<[number, number]> = [];
-for (const p of PARTS) {
-  FOOTPRINTS.push([p.w, p.l]);
-  if (p.w !== p.l) FOOTPRINTS.push([p.l, p.w]);
+/** (u,v) tarama uzayında yönlendirilmiş parça izi */
+interface Footprint {
+  su: number;
+  sv: number;
+  id: string;
 }
 
-class Layer {
-  bricks: RawBrick[] = [];
-  /** hücre -> bu katmandaki tuğla indeksi (-1 boş) */
-  owner: Int32Array;
-  constructor(size: number) {
-    this.owner = new Int32Array(size).fill(-1);
+/** Bir kursun (3 kat) parçaları. owner[k]: hücre -> kurs içi parça indeksi (-1 boş). Tuğla 3 katta aynı indeksle görünür. */
+class Course {
+  parts: RawPart[] = [];
+  owner: Int32Array[];
+  constructor(layers: number, size: number) {
+    this.owner = Array.from({ length: layers }, () => new Int32Array(size).fill(-1));
   }
 }
 
-function packLayer(
-  grid: VoxelGrid,
+/** Puanlamada kullanılan alttaki kat */
+interface LayerView {
+  owner: Int32Array;
+  parts: RawPart[];
+}
+
+interface Ctx {
+  grid: VoxelGrid;
+  catalog: Catalog;
+  /** Bu renk koduyla başlayan bir parça için denenecek izler (iki yön), büyükten küçüğe. */
+  options: (kind: Kind, code: number) => Footprint[];
+}
+
+function makeCtx(grid: VoxelGrid, catalog: Catalog): Ctx {
+  const cache = new Map<string, Footprint[]>();
+  const options = (kind: Kind, code: number): Footprint[] => {
+    const key = `${kind}${code}`;
+    let list = cache.get(key);
+    if (!list) {
+      list = [];
+      for (const p of footprints(catalog, colorIdFromCode(code), kind)) {
+        list.push({ su: p.w, sv: p.l, id: p.id });
+        if (p.w !== p.l) list.push({ su: p.l, sv: p.w, id: p.id });
+      }
+      cache.set(key, list);
+    }
+    return list;
+  };
+  return { grid, catalog, options };
+}
+
+/**
+ * Bir kat (plaka) ya da kurs (tuğla) için `codes` içindeki hücreleri açgözlü doldurur.
+ * Parça `layers` ile verilen kurs katlarının hepsinde sahip olarak işaretlenir.
+ */
+function fillPass(
+  ctx: Ctx,
+  course: Course,
+  kind: Kind,
+  codes: Int16Array,
+  layers: number[],
   y: number,
-  below: Layer | null,
+  below: LayerView | null,
   t: Transform,
   rng: () => number,
   jitter: number,
-): Layer {
-  const { w, d } = grid;
-  const layer = new Layer(w * d);
+): void {
+  const { w, d } = ctx.grid;
+  const owner = course.owner[layers[0]];
+  const h = kind === 'brick' ? 3 : 1;
   const U = t.swap ? d : w;
   const V = t.swap ? w : d;
-  const toXZ = (u: number, v: number): [number, number] => {
+  const cellAt = (u: number, v: number): number => {
     const uu = t.flipU ? U - 1 - u : u;
     const vv = t.flipV ? V - 1 - v : v;
-    return t.swap ? [vv, uu] : [uu, vv];
+    return t.swap ? vv + w * uu : uu + w * vv;
   };
-  const cell = (x: number, z: number) => x + w * z;
-  const preferX = y % 2 === 0; // katmanlar arası yön değişimi -> daha iyi kenetlenme
+  const preferX = y % 2 === 0; // katlar arası yön değişimi -> daha iyi kenetlenme
 
   for (let v = 0; v < V; v++) {
     for (let u = 0; u < U; u++) {
-      const [ax, az] = toXZ(u, v);
-      const code0 = grid.get(ax, y, az);
-      if (code0 === EMPTY || layer.owner[cell(ax, az)] !== -1) continue;
+      const anchor = cellAt(u, v);
+      const code0 = codes[anchor];
+      if (code0 === EMPTY || owner[anchor] !== -1) continue;
 
-      let best: { raw: RawBrick; score: number } | null = null;
-      for (const [su, sv] of FOOTPRINTS) {
-        if (u + su > U || v + sv > V) continue;
-        let color = code0 === WILDCARD ? WILDCARD : code0;
+      let best: { raw: RawPart; score: number } | null = null;
+      for (const f of ctx.options(kind, code0)) {
+        if (u + f.su > U || v + f.sv > V) continue;
+        let color = code0;
         let ok = true;
         let minX = Infinity;
         let minZ = Infinity;
@@ -106,26 +155,28 @@ function packLayer(
         let maxZ = -Infinity;
         const belowIds = new Set<number>();
         let unsupportedCells = 0;
-        for (let dv = 0; dv < sv && ok; dv++) {
-          for (let du = 0; du < su; du++) {
-            const [x, z] = toXZ(u + du, v + dv);
-            const c = grid.get(x, y, z);
-            if (c === EMPTY || layer.owner[cell(x, z)] !== -1) {
+        for (let dv = 0; dv < f.sv && ok; dv++) {
+          for (let du = 0; du < f.su; du++) {
+            const c = cellAt(u + du, v + dv);
+            const code = codes[c];
+            if (code === EMPTY || owner[c] !== -1) {
               ok = false;
               break;
             }
-            if (c !== WILDCARD) {
-              if (color === WILDCARD) color = c;
-              else if (c !== color) {
+            if (code !== WILDCARD) {
+              if (color === WILDCARD) color = code;
+              else if (code !== color) {
                 ok = false;
                 break;
               }
             }
             if (below) {
-              const b = below.owner[cell(x, z)];
+              const b = below.owner[c];
               if (b >= 0) belowIds.add(b);
               else unsupportedCells++;
             }
+            const x = c % w;
+            const z = (c - x) / w;
             minX = Math.min(minX, x);
             minZ = Math.min(minZ, z);
             maxX = Math.max(maxX, x);
@@ -133,31 +184,88 @@ function packLayer(
           }
         }
         if (!ok) continue;
+        // İç dolgu hücresiyle başlayan parça renk aldıysa o renkte de açık olmalı.
+        if (code0 === WILDCARD && color !== WILDCARD && !isEnabled(ctx.catalog, f.id, colorIdFromCode(color))) continue;
         const sx = maxX - minX + 1;
         const sz = maxZ - minZ + 1;
-        const area = sx * sz;
-        let score = area * 4;
+        let score = sx * sz * 4;
         if (below) {
           if (belowIds.size === 0) score -= 6;
           score += Math.max(0, belowIds.size - 1) * 6; // alttaki birden fazla parçayı birbirine bağlar
           if (belowIds.size === 1) {
-            const only = below.bricks[[...belowIds][0]];
-            if (only.x === minX && only.z === minZ && only.sx === sx && only.sz === sz) score -= 10; // üst üste aynı parça: zayıf dikiş
+            const only = below.parts[[...belowIds][0]];
+            if (only.x === minX && only.z === minZ && only.sx === sx && only.sz === sz) score -= 10; // üst üste aynı iz: zayıf dikiş
           }
           score -= unsupportedCells * 0.5;
         }
         if (sx !== sz && sx > sz === preferX) score += 2;
         score += rng() * jitter;
-        if (!best || score > best.score) best = { raw: { x: minX, z: minZ, sx, sz, code: color }, score };
+        if (!best || score > best.score) best = { raw: { x: minX, y, z: minZ, sx, sz, h, code: color }, score };
       }
-      if (!best) continue; // olamaz: 1x1 her zaman sığar
-      const idx = layer.bricks.length;
-      layer.bricks.push(best.raw);
+      if (!best) {
+        if (kind === 'plate') throw new Error(`Katalogda ${colorIdFromCode(code0)} için 1x1 plaka yok`);
+        continue; // tuğla sığmadı: hücre plaka geçişine kalır
+      }
+      const idx = course.parts.length;
+      course.parts.push(best.raw);
       for (let z = best.raw.z; z < best.raw.z + best.raw.sz; z++)
-        for (let x = best.raw.x; x < best.raw.x + best.raw.sx; x++) layer.owner[cell(x, z)] = idx;
+        for (let x = best.raw.x; x < best.raw.x + best.raw.sx; x++)
+          for (const k of layers) course.owner[k][x + w * z] = idx;
     }
   }
-  return layer;
+}
+
+/** Kursun 3 katı da dolu ve renkleri uyumluysa (WILDCARD hariç tek renk) sütunun rengi, değilse EMPTY. */
+function columnCodes(grid: VoxelGrid, y0: number): Int16Array {
+  const { w, d } = grid;
+  const out = new Int16Array(w * d);
+  for (let z = 0; z < d; z++)
+    for (let x = 0; x < w; x++) {
+      let color = WILDCARD;
+      for (let k = 0; k < COURSE; k++) {
+        const c = grid.get(x, y0 + k, z);
+        if (c === EMPTY || (c !== WILDCARD && color !== WILDCARD && c !== color)) {
+          color = EMPTY;
+          break;
+        }
+        if (c !== WILDCARD) color = c;
+      }
+      out[x + w * z] = color;
+    }
+  return out;
+}
+
+function packCourse(
+  ctx: Ctx,
+  c: number,
+  prev: Course | null,
+  base: Transform,
+  rng: () => number,
+  jitter: number,
+  useBricks: boolean,
+): Course {
+  const { grid } = ctx;
+  const { w, d } = grid;
+  const y0 = c * COURSE;
+  const n = Math.min(COURSE, grid.h - y0);
+  const course = new Course(n, w * d);
+  const transformAt = (y: number): Transform => ({ ...base, swap: y % 2 === 0 ? base.swap : !base.swap });
+  const belowOf = (k: number): LayerView | null => {
+    if (k > 0) return { owner: course.owner[k - 1], parts: course.parts };
+    return prev ? { owner: prev.owner[prev.owner.length - 1], parts: prev.parts } : null;
+  };
+
+  if (useBricks && n === COURSE) {
+    fillPass(ctx, course, 'brick', columnCodes(grid, y0), [0, 1, 2], y0, belowOf(0), transformAt(y0), rng, jitter);
+  }
+  for (let k = 0; k < n; k++) {
+    const codes = new Int16Array(w * d);
+    const taken = course.owner[k];
+    for (let z = 0; z < d; z++)
+      for (let x = 0; x < w; x++) if (taken[x + w * z] === -1) codes[x + w * z] = grid.get(x, y0 + k, z);
+    fillPass(ctx, course, 'plate', codes, [k], y0 + k, belowOf(k), transformAt(y0 + k), rng, jitter);
+  }
+  return course;
 }
 
 // ---------- Bağlantı analizi ----------
@@ -165,17 +273,19 @@ function packLayer(
 interface Analysis {
   components: number;
   mainSize: number;
-  looseLayers: Set<number>;
+  looseCourses: Set<number>;
   weak: number; // tek bağlantılı parça sayısı
   total: number;
 }
 
-function analyze(layers: Layer[], w: number, d: number): Analysis {
+function analyze(courses: Course[], size: number): Analysis {
   const offsets: number[] = [];
+  const layers: Array<{ owner: Int32Array; off: number }> = [];
   let total = 0;
-  for (const l of layers) {
+  for (const c of courses) {
     offsets.push(total);
-    total += l.bricks.length;
+    for (const owner of c.owner) layers.push({ owner, off: total });
+    total += c.parts.length;
   }
   const parent = new Int32Array(total).map((_, i) => i);
   const find = (i: number): number => {
@@ -186,19 +296,21 @@ function analyze(layers: Layer[], w: number, d: number): Analysis {
     return i;
   };
   const degree = new Int32Array(total);
-  for (let y = 0; y + 1 < layers.length; y++) {
-    const a = layers[y];
-    const b = layers[y + 1];
+  // Ardışık iki katta aynı hücrede iki farklı parça varsa birleşiktir.
+  for (let l = 0; l + 1 < layers.length; l++) {
+    const a = layers[l];
+    const b = layers[l + 1];
     const seen = new Set<number>();
-    for (let c = 0; c < w * d; c++) {
+    for (let c = 0; c < size; c++) {
       const i = a.owner[c];
       const j = b.owner[c];
       if (i < 0 || j < 0) continue;
-      const key = i * 100000 + j;
+      const gi = a.off + i;
+      const gj = b.off + j;
+      if (gi === gj) continue; // aynı tuğla
+      const key = gi * total + gj;
       if (seen.has(key)) continue;
       seen.add(key);
-      const gi = offsets[y] + i;
-      const gj = offsets[y + 1] + j;
       degree[gi]++;
       degree[gj]++;
       const ri = find(gi);
@@ -214,16 +326,16 @@ function analyze(layers: Layer[], w: number, d: number): Analysis {
   let mainRoot = -1;
   let mainSize = 0;
   for (const [r, s] of sizes) if (s > mainSize) [mainRoot, mainSize] = [r, s];
-  const looseLayers = new Set<number>();
+  const looseCourses = new Set<number>();
   let weak = 0;
-  layers.forEach((l, y) => {
-    l.bricks.forEach((_, i) => {
-      const g = offsets[y] + i;
-      if (find(g) !== mainRoot) looseLayers.add(y);
+  courses.forEach((course, ci) => {
+    for (let i = 0; i < course.parts.length; i++) {
+      const g = offsets[ci] + i;
+      if (find(g) !== mainRoot) looseCourses.add(ci);
       if (degree[g] <= 1) weak++;
-    });
+    }
   });
-  return { components: sizes.size, mainSize, looseLayers, weak, total };
+  return { components: sizes.size, mainSize, looseCourses, weak, total };
 }
 
 function cost(a: Analysis): number {
@@ -236,136 +348,137 @@ const TRANSFORMS: Transform[] = [];
 for (const swap of [false, true])
   for (const flipU of [false, true]) for (const flipV of [false, true]) TRANSFORMS.push({ swap, flipU, flipV });
 
-function packAll(grid: VoxelGrid, seed: number): Layer[] {
+const REPAIR_JITTER = [4, 8, 12, 16];
+
+function packAll(ctx: Ctx, seed: number, useBricks: boolean): Course[] {
   const rng = mulberry32(seed);
   const base = TRANSFORMS[seed % TRANSFORMS.length];
-  const layers: Layer[] = [];
-  for (let y = 0; y < grid.h; y++) {
-    const t = { ...base, swap: y % 2 === 0 ? base.swap : !base.swap };
-    layers.push(packLayer(grid, y, y > 0 ? layers[y - 1] : null, t, rng, seed === 0 ? 0 : 1.5));
+  const courses: Course[] = [];
+  for (let c = 0; c * COURSE < ctx.grid.h; c++) {
+    courses.push(packCourse(ctx, c, c > 0 ? courses[c - 1] : null, base, rng, seed === 0 ? 0 : 1.5, useBricks));
   }
-  return layers;
+  return courses;
 }
 
 /**
- * Voksel ızgarasını tuğlalara böler. Deterministiktir: aynı ızgara her zaman
- * aynı sonucu verir (istemci önizlemesi ile sunucu fiyatı tutarlı kalır).
+ * Voksel ızgarasını (y birimi plaka) katalogda açık tuğla ve plakalara böler.
+ * Deterministiktir: aynı ızgara ve katalog her zaman aynı sonucu verir
+ * (istemci önizlemesi ile sunucu fiyatı tutarlı kalır).
  */
-export function packBricks(grid: VoxelGrid, attempts = 24): PackResult {
-  const { w, d } = grid;
-  let bestLayers: Layer[] | null = null;
-  let bestAnalysis: Analysis | null = null;
+export function packBricks(grid: VoxelGrid, catalog: Catalog, attempts = 12): PackResult {
+  const ctx = makeCtx(grid, catalog);
+  const size = grid.w * grid.d;
+  let courses: Course[] | null = null;
+  let analysis: Analysis | null = null;
   for (let s = 0; s < attempts; s++) {
-    const layers = packAll(grid, s);
-    const a = analyze(layers, w, d);
-    if (!bestAnalysis || cost(a) < cost(bestAnalysis)) {
-      bestLayers = layers;
-      bestAnalysis = a;
+    const trial = packAll(ctx, s, s % 3 !== 2);
+    const a = analyze(trial, size);
+    if (!analysis || cost(a) < cost(analysis)) {
+      courses = trial;
+      analysis = a;
     }
   }
-  let layers = bestLayers!;
-  let analysis = bestAnalysis!;
+  if (!courses || !analysis) throw new Error('En az bir deneme gerekir');
 
-  // Onarım: kopuk parça içeren katmanları farklı tohumlarla yeniden döşe
+  // Onarım: kopuk parça içeren kursları ve komşularını farklı tohumlarla yeniden döşe.
+  // Puan gürültüsü turdan tura REPAIR_JITTER içinde döner: küçük gürültü döşemeyi korur, büyük gürültü açgözlü
+  // seçimin dışına çıkar (ör. desteğin hepsini tek başına kaplayıp çıkıntıyı kopuk bırakan plaka).
   const rng = mulberry32(12345);
   for (let iter = 0; iter < 200 && analysis.components > 1; iter++) {
     const candidates = new Set<number>();
-    for (const y of analysis.looseLayers) {
-      candidates.add(y);
-      if (y > 0) candidates.add(y - 1);
-      if (y + 1 < grid.h) candidates.add(y + 1);
+    for (const c of analysis.looseCourses) {
+      candidates.add(c);
+      if (c > 0) candidates.add(c - 1);
+      if (c + 1 < courses.length) candidates.add(c + 1);
     }
     const list = [...candidates];
-    const y = list[Math.floor(rng() * list.length)];
+    const c = list[Math.floor(rng() * list.length)];
     const t = TRANSFORMS[Math.floor(rng() * TRANSFORMS.length)];
-    const trial = layers.slice();
-    trial[y] = packLayer(grid, y, y > 0 ? trial[y - 1] : null, t, mulberry32(iter * 7919 + y), 4);
-    const a = analyze(trial, w, d);
+    const useBricks = rng() >= 0.5;
+    const trial = courses.slice();
+    const jitter = REPAIR_JITTER[iter % REPAIR_JITTER.length];
+    trial[c] = packCourse(ctx, c, c > 0 ? trial[c - 1] : null, t, mulberry32(iter * 7919 + c), jitter, useBricks);
+    const a = analyze(trial, size);
     if (cost(a) < cost(analysis)) {
-      layers = trial;
+      courses = trial;
       analysis = a;
     }
   }
 
-  const bricks = toBricks(layers, w, d);
   return {
-    bricks,
+    bricks: toBricks(courses, grid.w),
     components: analysis.components,
     looseBricks: analysis.total - analysis.mainSize,
   };
 }
 
-function toBricks(layers: Layer[], w: number, d: number): Brick[] {
+function toBricks(courses: Course[], w: number): Brick[] {
   const out: Brick[] = [];
-  const ids: number[][] = [];
-  layers.forEach((l, y) => {
-    ids.push([]);
-    for (const b of l.bricks) {
-      const part = partForFootprint(b.sx, b.sz);
-      if (!part) throw new Error(`Desteklenmeyen ölçü ${b.sx}x${b.sz}`);
-      ids[y].push(out.length);
-      out.push({
-        id: out.length,
-        part: part.id,
-        color: b.code === WILDCARD ? FILLER_ID : colorIdFromCode(b.code),
-        x: b.x,
-        y,
-        z: b.z,
-        sx: b.sx,
-        sz: b.sz,
-        step: -1,
-        hanging: false,
-      });
-    }
-  });
+  const ids: number[][] = []; // kurs -> kurs içi indeks -> out indeksi
+  for (const course of courses) {
+    ids.push(
+      course.parts.map((p) => {
+        const kind: Kind = p.h === 3 ? 'brick' : 'plate';
+        const part = partForFootprint(p.sx, p.sz, kind);
+        if (!part) throw new Error(`Desteklenmeyen ölçü ${p.sx}x${p.sz}`);
+        out.push({
+          id: out.length,
+          part: part.id,
+          color: colorIdFromCode(p.code),
+          x: p.x,
+          y: p.y,
+          z: p.z,
+          sx: p.sx,
+          sz: p.sz,
+          h: p.h,
+          step: -1,
+          hanging: false,
+        });
+        return out.length - 1;
+      }),
+    );
+  }
 
-  const overlaps = (y: number, i: number, y2: number): number[] => {
-    const b = layers[y].bricks[i];
-    const l2 = layers[y2];
-    if (!l2) return [];
+  /** `p`nin izinde `y` katını kaplayan parçalar (out indeksleri). */
+  const overlaps = (p: RawPart, y: number): number[] => {
+    const ci = Math.floor(y / COURSE);
+    const owner = y >= 0 ? courses[ci]?.owner[y - ci * COURSE] : undefined;
+    if (!owner) return [];
     const res = new Set<number>();
-    for (let z = b.z; z < b.z + b.sz; z++)
-      for (let x = b.x; x < b.x + b.sx; x++) {
-        const o = l2.owner[x + w * z];
-        if (o >= 0) res.add(o);
+    for (let z = p.z; z < p.z + p.sz; z++)
+      for (let x = p.x; x < p.x + p.sx; x++) {
+        const o = owner[x + w * z];
+        if (o >= 0) res.add(ids[ci][o]);
       }
     return [...res];
   };
 
-  // 1) Aşağıdan yukarı: altında takılmış parça olanlar o katmanda takılır
-  layers.forEach((l, y) => {
-    l.bricks.forEach((_, i) => {
-      const br = out[ids[y][i]];
-      if (y === 0) {
-        br.step = 0;
-        return;
-      }
-      const supported = overlaps(y, i, y - 1).some((j) => {
-        const s = out[ids[y - 1][j]].step;
-        return s >= 0 && s <= y - 1;
-      });
-      if (supported) br.step = y;
-    });
-  });
-  // 2) Yukarıdan aşağı: desteksiz parçalar üstteki parçanın altına takılır
-  for (let y = layers.length - 1; y >= 0; y--) {
-    layers[y].bricks.forEach((_, i) => {
-      const br = out[ids[y][i]];
-      if (br.step >= 0) return;
-      const above = overlaps(y, i, y + 1)
-        .map((j) => out[ids[y + 1][j]].step)
-        .filter((s) => s >= 0);
-      if (above.length) {
-        br.step = Math.min(...above);
-        br.hanging = true;
-      }
-    });
+  // Parçalar kurs ve geçiş sırasıyla üretildi: bu sıra y'ye göre artandır.
+  const order = courses.flatMap((course, ci) => course.parts.map((p, i) => ({ p, i: ids[ci][i] })));
+  const supported = new Uint8Array(out.length);
+  // 1) Aşağıdan yukarı: zeminde ya da hemen altındaki desteklenmiş bir parçaya takılı olan desteklenmiştir
+  for (const { p, i } of order) {
+    if (p.y === 0 || overlaps(p, p.y - 1).some((j) => supported[j])) {
+      supported[i] = 1;
+      out[i].step = Math.floor(p.y / COURSE);
+    }
   }
-  // Kalanlar (kopuk) kendi katmanında gösterilir
-  for (const b of out) if (b.step < 0) b.step = b.y;
+  // 2) Yukarıdan aşağı: desteksiz parça hemen üstündeki parçaların en erken adımında, onların altına takılır
+  for (let k = order.length - 1; k >= 0; k--) {
+    const { p, i } = order[k];
+    if (supported[i]) continue;
+    const above = overlaps(p, p.y + p.h)
+      .map((j) => out[j].step)
+      .filter((s) => s >= 0);
+    if (above.length) {
+      out[i].step = Math.min(...above);
+      out[i].hanging = true;
+    }
+  }
+  // Kalanlar (kopuk) kendi kursunda gösterilir
+  for (const b of out) if (b.step < 0) b.step = Math.floor(b.y / COURSE);
 
   out.sort((a, b) => a.step - b.step || a.y - b.y || a.z - b.z || a.x - b.x);
   out.forEach((b, i) => (b.id = i));
-  void d;
   return out;
 }

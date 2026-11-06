@@ -20,10 +20,20 @@ export function groupSteps(bricks: Brick[]): StepInfo[] {
   return out;
 }
 
-/** Asılı parçaların alt yazısı. `y`: açıklanan asılı katman. */
-export function hangingCaption(s: StepInfo, y: number): string {
+/** Bir katmandaki parçaların yüksekliği (plaka): en yüksek olanınki; v1 parçalarında `h` yoktur, 1 sayılır. */
+export function layerHeight(items: Brick[]): number {
+  return items.reduce((m, b) => Math.max(m, b.h ?? 1), 1);
+}
+
+/**
+ * Asılı parçaların alt yazısı. `y`: açıklanan asılı katman, `h`: o katmandaki parçaların yüksekliği.
+ * Asılı parça y..y+h-1 aralığını kaplar ve `y + h` katındaki parçanın altına takılır.
+ */
+export function hangingCaption(s: StepInfo, y: number, h: number): string {
   const isV2 = [...s.main, ...s.hanging].some((b) => b.h !== undefined);
   if (!isV2) return `Bunları ${(s.mainLayers[0] ?? s.step) - y} sıra alttan tak`;
   if (!s.mainLayers.length) return 'Bunları üstteki parçaların altına tak';
-  return `Bunları 1. katın ${Math.max(1, s.mainLayers[0] - y)} plaka altına tak`;
+  const k = s.mainLayers.indexOf(y + h);
+  if (k >= 0) return `Bunları ${k + 1}. kattaki parçaların altına tak`;
+  return `Bunları 1. katın ${s.mainLayers[0] - y} plaka altına tak`;
 }

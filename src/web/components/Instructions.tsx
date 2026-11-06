@@ -3,7 +3,7 @@ import type { Brick } from '../../engine/packer';
 import { getColor, hexToRgb, FILLER_ID } from '../../engine/palette';
 import { getPart } from '../../engine/parts';
 import { LayerMap } from './LayerMap';
-import { groupSteps, type StepInfo } from './steps';
+import { groupSteps, hangingCaption, type StepInfo } from './steps';
 import { Viewer3D } from './Viewer3D';
 
 export function useSteps(bricks: Brick[]): StepInfo[] {
@@ -48,9 +48,6 @@ function StepParts({ items }: { items: Brick[] }) {
 
 function StepBody({ bricks, s, cell }: { bricks: Brick[]; s: StepInfo; cell?: number }) {
   const hangingLayers = [...new Set(s.hanging.map((b) => b.y))].sort((a, b) => b - a);
-  const mainLayer = s.mainLayers[0] ?? (hangingLayers[0] ?? s.step) + 1;
-  // v2 parçalarında yükseklik plaka biriminde; "sıra" üç plakadır
-  const unit = s.hanging.some((b) => b.h !== undefined) ? 3 : 1;
   return (
     <div className="step-body">
       <div className="step-maps">
@@ -63,7 +60,7 @@ function StepBody({ bricks, s, cell }: { bricks: Brick[]; s: StepInfo; cell?: nu
         {hangingLayers.map((y) => (
           <figure key={y}>
             <LayerMap bricks={bricks} items={s.hanging.filter((b) => b.y === y)} cell={cell} dashed />
-            <figcaption>Bunları {Math.max(1, Math.round((mainLayer - y) / unit))} sıra alttan tak</figcaption>
+            <figcaption>{hangingCaption(s, y)}</figcaption>
           </figure>
         ))}
       </div>

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Brick } from '../../engine/packer';
-import { groupSteps } from './steps';
+import { groupSteps, hangingCaption } from './steps';
 
 const mk = (id: number, y: number, step: number, hanging = false): Brick =>
   ({ id, part: '2x2', color: 'red', x: 0, y, z: 0, sx: 2, sz: 2, h: 1, step, hanging }) as Brick;
@@ -23,5 +23,24 @@ describe('groupSteps', () => {
   it('v1 adımı tek ana kat verir', () => {
     const v1 = [{ id: 0, y: 2, step: 2, hanging: false }, { id: 1, y: 2, step: 2, hanging: false }] as Brick[];
     expect(groupSteps(v1)[0].mainLayers).toEqual([2]);
+  });
+});
+
+describe('hangingCaption', () => {
+  it('v2: ilk kata göre plaka cinsinden', () => {
+    const s = groupSteps([mk(1, 3, 1), mk(2, 4, 1), mk(3, 5, 1), mk(4, 2, 1, true), mk(5, 1, 1, true)])[0];
+    expect(hangingCaption(s, 2)).toBe('Bunları 1. katın 1 plaka altına tak');
+    expect(hangingCaption(s, 1)).toBe('Bunları 1. katın 2 plaka altına tak');
+  });
+  it('v2: yalnızca asılı adım', () => {
+    const s = groupSteps([mk(1, 2, 1, true)])[0];
+    expect(hangingCaption(s, 2)).toBe('Bunları üstteki parçaların altına tak');
+  });
+  it('v1: eski metin', () => {
+    const s = groupSteps([
+      { id: 0, y: 3, step: 3, hanging: false },
+      { id: 1, y: 1, step: 3, hanging: true },
+    ] as Brick[])[0];
+    expect(hangingCaption(s, 1)).toBe('Bunları 2 sıra alttan tak');
   });
 });

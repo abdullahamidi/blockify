@@ -19,3 +19,11 @@ export function groupSteps(bricks: Brick[]): StepInfo[] {
   for (const s of out) s.mainLayers = [...new Set(s.main.map((b) => b.y))].sort((a, b) => a - b);
   return out;
 }
+
+/** Asılı parçaların alt yazısı. `y`: açıklanan asılı katman. */
+export function hangingCaption(s: StepInfo, y: number): string {
+  const isV2 = [...s.main, ...s.hanging].some((b) => b.h !== undefined);
+  if (!isV2) return `Bunları ${(s.mainLayers[0] ?? s.step) - y} sıra alttan tak`;
+  if (!s.mainLayers.length) return 'Bunları üstteki parçaların altına tak';
+  return `Bunları 1. katın ${Math.max(1, s.mainLayers[0] - y)} plaka altına tak`;
+}

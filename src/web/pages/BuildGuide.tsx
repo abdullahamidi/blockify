@@ -37,7 +37,7 @@ export function BuildGuide({ preview }: { preview?: boolean }) {
           <h1 className="page-title">Montaj kılavuzu</h1>
           <p className="muted">
             {preview ? 'Bu, şu anki tasarımının önizlemesi. ' : `Sipariş ${number}. `}
-            Her adımda bir sıra tuğla yerleştir. Plan üstten görünüştür, figürün önü aşağıda.
+            Her adımda gösterilen katları alttan üste doğru yerleştir. Plan üstten görünüştür, figürün önü aşağıda.
           </p>
         </div>
         {preview && (

@@ -3,24 +3,11 @@ import type { Brick } from '../../engine/packer';
 import { getColor, hexToRgb, FILLER_ID } from '../../engine/palette';
 import { getPart } from '../../engine/parts';
 import { LayerMap } from './LayerMap';
+import { groupSteps, type StepInfo } from './steps';
 import { Viewer3D } from './Viewer3D';
 
-interface StepInfo {
-  step: number;
-  main: Brick[];
-  hanging: Brick[];
-}
-
 export function useSteps(bricks: Brick[]): StepInfo[] {
-  return useMemo(() => {
-    const map = new Map<number, StepInfo>();
-    for (const b of bricks) {
-      let s = map.get(b.step);
-      if (!s) map.set(b.step, (s = { step: b.step, main: [], hanging: [] }));
-      (b.hanging ? s.hanging : s.main).push(b);
-    }
-    return [...map.values()].sort((a, b) => a.step - b.step);
-  }, [bricks]);
+  return useMemo(() => groupSteps(bricks), [bricks]);
 }
 
 function isLight(hex: string) {
@@ -47,7 +34,7 @@ function StepParts({ items }: { items: Brick[] }) {
               className={`chip-brick ${l.color === FILLER_ID ? 'dot-any' : ''} ${isLight(c.hex) ? 'on-light' : ''}`}
               style={{ background: c.hex }}
             >
-              {p.id.replace('plate8x8', '8x8')}
+              {p.kind === 'baseplate' ? p.id.replace(/^plate/, '') : p.id}
             </span>
             <span>
               <b>{l.qty}×</b> {c.name}
@@ -61,20 +48,22 @@ function StepParts({ items }: { items: Brick[] }) {
 
 function StepBody({ bricks, s, cell }: { bricks: Brick[]; s: StepInfo; cell?: number }) {
   const hangingLayers = [...new Set(s.hanging.map((b) => b.y))].sort((a, b) => b - a);
-  const mainLayer = s.main[0]?.y ?? s.step;
+  const mainLayer = s.mainLayers[0] ?? (hangingLayers[0] ?? s.step) + 1;
+  // v2 parçalarında yükseklik plaka biriminde; "sıra" üç plakadır
+  const unit = s.hanging.some((b) => b.h !== undefined) ? 3 : 1;
   return (
     <div className="step-body">
       <div className="step-maps">
-        {s.main.length > 0 && (
-          <figure>
-            <LayerMap bricks={bricks} items={s.main} refLayer={mainLayer - 1} cell={cell} />
-            <figcaption>Bu sırayı yerleştir</figcaption>
+        {s.mainLayers.map((y, i) => (
+          <figure key={`m${y}`}>
+            <LayerMap bricks={bricks} items={s.main.filter((b) => b.y === y)} refLayer={y - 1} cell={cell} />
+            <figcaption>{s.mainLayers.length === 1 ? 'Bu sırayı yerleştir' : `${i + 1}. kat`}</figcaption>
           </figure>
-        )}
+        ))}
         {hangingLayers.map((y) => (
           <figure key={y}>
             <LayerMap bricks={bricks} items={s.hanging.filter((b) => b.y === y)} cell={cell} dashed />
-            <figcaption>Bunları {mainLayer - y} sıra alttan tak</figcaption>
+            <figcaption>Bunları {Math.max(1, Math.round((mainLayer - y) / unit))} sıra alttan tak</figcaption>
           </figure>
         ))}
       </div>

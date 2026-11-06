@@ -31,6 +31,8 @@ export function skinShade(skin: string): string {
 
 const EYE_HALF_HEIGHT = [0.018, 0.028, 0.04];
 const BEARD_LINE_OFFSET = [-0.05, 0, 0.05];
+/** Yalnızca kafa kurulurken kullanılan "sakal" işareti; hairColor'a çevrilir ve sakal maskesine yazılır. */
+const BEARD = -2;
 
 interface Codes {
   skin: number;
@@ -61,9 +63,10 @@ function browRaise(level: number, t: number): number {
 
 /**
  * Ön yüze bakan bir hücrenin rengini veren fonksiyonu kurar. Öncelik: ağız (en son çizilir, sakal kapatmaz),
- * göz (kapalı göz çizilmez), kaş, göz kapağı, burun altı, yüz kılı, taban rengi.
+ * göz (kapalı göz çizilmez), kaş, göz kapağı, burun altı, yüz kılı (BEARD), taban rengi.
+ * isFace(x, y): o (x, y)'deki en öndeki hücre öne bakıyor mu (yüz çizilen hücre).
  */
-function facePainter(design: FigureDesign, W: number, H: number, k: Codes) {
+function facePainter(design: FigureDesign, W: number, H: number, k: Codes, isFace: (x: number, y: number) => boolean) {
   const f = (key: FaceKey) => faceValue(design, key);
   const [browHeight, browTilt, browThickness, browGap] = [f('browHeight'), f('browTilt'), f('browThickness'), f('browGap')];
   const [eyeHeight, eyeSpacing, eyeWidth] = [f('eyeHeight'), f('eyeSpacing'), f('eyeWidth')];
@@ -90,6 +93,8 @@ function facePainter(design: FigureDesign, W: number, H: number, k: Codes) {
   const [eyeLo, eyeHi] = bandRows((v) => Math.abs(v - eyeHeight) <= hh, eyeHeight);
   const irisCol = Math.min(W / 2, Math.max(1, Math.round((eyeSpacing * W + 1) / 2)));
   const [lineLo, lineHi] = bandRows((v) => v >= mouthHeight && v < mouthHeight + 0.028, mouthHeight);
+  const mustacheBottom = mouthHeight + 0.028;
+  const [mustLo, mustHi] = bandRows((v) => v >= mustacheBottom && v < noseBottom, (mustacheBottom + noseBottom) / 2);
 
   // Gülümseme: küçük boyutta smile 3, smile 2 gibi çizilir.
   const shape = smile === 3 && !big ? 2 : smile;
@@ -118,22 +123,54 @@ function facePainter(design: FigureDesign, W: number, H: number, k: Codes) {
     return EMPTY;
   }
 
+  const raiseOf = [browRaiseL, browRaiseR]; // taraf 0 = L (u < 0), 1 = R
+  const tiltScale = [1, 1];
+
   function isBrow(u: number, y: number): boolean {
     const au = Math.abs(u);
     // max(inner, 1.5/W): iki orta sütun hiçbir zaman kaş olmaz, kaşlar birleşmez.
     if (au < Math.max(browGap, 1.5 / W) || au > 0.8) return false;
     const t = (au - browGap) / (0.8 - browGap);
-    const raise = u < 0 ? browRaiseL : browRaiseR;
+    const side = u < 0 ? 0 : 1;
+    const raise = raiseOf[side];
     const vc =
       !big && raise === 0
         ? browHeight
-        : browHeight + 0.018 * Math.sin(Math.PI * Math.min(1, 1.25 * t)) + browTilt * t + browRaise(raise, t);
+        : browHeight +
+          0.018 * Math.sin(Math.PI * Math.min(1, 1.25 * t)) +
+          browTilt * tiltScale[side] * t +
+          browRaise(raise, t);
     return Math.abs((y + 0.5) / H - vc) <= browThickness - 0.006 * t || y === nearestRow(vc);
   }
 
-  function isFacialHair(au: number, v: number): boolean {
+  /** Görünen kaşta (v > eyeHeight + 0.05) en içteki sütunun üst satırı eksi en dıştaki sütunun üst satırı. */
+  function browInnerMinusOuter(side: number): number {
+    const sign = side ? 1 : -1;
+    let innerTop = -1;
+    let outerTop = -1;
+    for (let col = 1; col <= W / 2; col++) {
+      const x = cx + sign * (col - 0.5);
+      const u = sign * colU(col);
+      let top = -1;
+      for (let y = 0; y < H; y++) if ((y + 0.5) / H > eyeHeight + 0.05 && isFace(x, y) && isBrow(u, y)) top = y;
+      if (top < 0) continue;
+      if (innerTop < 0) innerTop = top;
+      outerTop = top;
+    }
+    return innerTop < 0 ? 0 : innerTop - outerTop;
+  }
+
+  // Nötr kaş kuralı (genel kısıt, FACE_SCALE'den önce gelir): iç uç dış uçtan en fazla 1 satır yüksek.
+  // Aşılırsa o tarafın eğim terimi yarıya indirilir; 4 yarılamadan sonra eğim 0 olur.
+  for (const side of [0, 1]) {
+    if (raiseOf[side] !== 0) continue;
+    for (let halvings = 0; browInnerMinusOuter(side) > 1 && tiltScale[side] !== 0; halvings++)
+      tiltScale[side] = halvings < 4 ? tiltScale[side] / 2 : 0;
+  }
+
+  function isFacialHair(au: number, y: number, v: number): boolean {
     if (design.facialHair === 'none') return false;
-    if (v >= mouthHeight + 0.028 && v < noseBottom && au <= mouthWidth + 0.15) return true; // bıyık bandı
+    if (y >= mustLo && y <= mustHi && au <= mouthWidth + 0.15) return true; // bıyık bandı
     return design.facialHair === 'goatee' && v < mouthHeight - 0.045 && au <= mouthWidth + 0.05;
   }
 
@@ -152,7 +189,7 @@ function facePainter(design: FigureDesign, W: number, H: number, k: Codes) {
     if (isBrow(u, y)) return k.hair;
     if (big && y === eyeHi + 1 && de <= eyeWidth) return k.shade;
     if (v >= noseBottom && v < noseBottom + 0.055 && au <= noseWidth) return k.shade;
-    if (isFacialHair(au, v)) return k.hair;
+    if (isFacialHair(au, y, v)) return BEARD;
     return base;
   };
 }
@@ -199,17 +236,35 @@ export function buildHead(design: FigureDesign): VoxelGrid {
   }
 
   // 2) Renk: sakal tabanı, ardından öne bakan (önü boş ve a < 55°) hücrelerde yüz.
-  const paint = facePainter(design, W, H, k);
+  //    Şekil z'de dışbükey olduğundan önü boş hücre o (x, y)'deki en öndeki hücredir.
+  const angle = (x: number, z: number) => (Math.abs(Math.atan2(x - cx, ((z - cz) * W) / D)) * 180) / Math.PI;
+  const frontZ = (x: number, y: number) => {
+    let z = D;
+    while (z >= 1 && g.get(x, y, z) === EMPTY) z--;
+    return z;
+  };
+  const faceFront = new Uint8Array(g.w * g.h);
+  for (let y = 0; y < H; y++)
+    for (let x = 1; x <= W; x++) {
+      const fz = frontZ(x, y);
+      if (fz >= 1 && angle(x, fz) < 55) faceFront[x + g.w * y] = 1;
+    }
+  const paint = facePainter(design, W, H, k, (x, y) => faceFront[x + g.w * y] === 1);
   const beard = design.facialHair === 'shortBeard' || design.facialHair === 'fullBeard';
   const off = BEARD_LINE_OFFSET[design.beardLine];
+  const beardFront = new Uint8Array(g.w * g.h); // en öndeki hücresi sakal olan (x, y)
   for (let y = 0; y < H; y++)
     for (let z = 1; z <= D; z++)
       for (let x = 1; x <= W; x++) {
         if (g.get(x, y, z) === EMPTY) continue;
         const v = (y + 0.5) / H;
-        const a = (Math.abs(Math.atan2(x - cx, ((z - cz) * W) / D)) * 180) / Math.PI;
-        let c = beard && v < beardTop(a, off) ? k.hair : k.skin;
-        if (g.get(x, y, z + 1) === EMPTY && a < 55) c = paint(x, y, c);
+        const front = g.get(x, y, z + 1) === EMPTY;
+        let c = beard && v < beardTop(angle(x, z), off) ? BEARD : k.skin;
+        if (front && faceFront[x + g.w * y]) c = paint(x, y, c);
+        if (c === BEARD) {
+          c = k.hair;
+          if (front) beardFront[x + g.w * y] = 1;
+        }
         g.set(x, y, z, c);
       }
 
@@ -235,7 +290,8 @@ export function buildHead(design: FigureDesign): VoxelGrid {
     }
   }
 
-  // 4) Büyük boyutta hacim: öne çıkan burun; dolgun sakalda ön sakal hücrelerinin önüne bir hücre.
+  // 4) Büyük boyutta hacim: öne çıkan burun; dolgun sakalda ön sakal hücrelerinin (renge göre değil,
+  //    sakal maskesine göre) önüne bir hücre. Ağız hücreleri sakal sayılmadığından ağız kapanmaz.
   if (W >= 12) {
     const noseBottom = faceValue(design, 'noseBottom');
     const noseHalf = Math.max(1 / W, faceValue(design, 'noseWidth') - 0.02);
@@ -243,14 +299,13 @@ export function buildHead(design: FigureDesign): VoxelGrid {
     const full = design.facialHair === 'fullBeard';
     for (let y = 0; y < H; y++)
       for (let x = 1; x <= W; x++) {
-        let fz = D;
-        while (fz >= 1 && g.get(x, y, fz) === EMPTY) fz--;
+        const fz = frontZ(x, y);
         if (fz < 1) continue;
         const au = Math.abs((x - cx) / (W / 2));
         const v = (y + 0.5) / H;
         if (au <= noseHalf && v >= noseBottom && v < noseBottom + 0.14)
           g.set(x, y, fz + 1, v < noseBottom + 0.055 ? k.shade : k.skin);
-        else if (full && v < mouthHeight - 0.01 && au <= 0.8 && g.get(x, y, fz) === k.hair) g.set(x, y, fz + 1, k.hair);
+        else if (full && v < mouthHeight - 0.01 && au <= 0.8 && beardFront[x + g.w * y]) g.set(x, y, fz + 1, k.hair);
       }
   }
   return g;

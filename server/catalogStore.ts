@@ -2,12 +2,13 @@ import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { catalogKey, createCatalog, defaultCatalog, type Catalog } from '../src/engine/index';
+import { catalogKey, catalogProblems, createCatalog, defaultCatalog, enabledColors, type Catalog } from '../src/engine/index';
 
 /**
  * Parça kataloğu deposu. Bu planda salt okunurdur: `data/inventory.json` açılışta bir kez okunur.
  * Biçim: { "items": [{ "part": string, "color": string, "enabled": boolean }] }
- * Dosya yoksa ya da bozuksa varsayılan katalog kullanılır.
+ * Dosya yoksa, bozuksa ya da hiç kullanılabilir renk (1x1 plakası açık renk) vermiyorsa varsayılan katalog
+ * kullanılır; yoksa her teklif ve sipariş 500 dönerdi.
  */
 export class CatalogStore {
   private readonly file: string;
@@ -28,7 +29,18 @@ export class CatalogStore {
           keys.push(catalogKey(it.part, it.color));
         }
       }
-      this.catalog = createCatalog(keys);
+      const c = createCatalog(keys);
+      const problems = catalogProblems(c);
+      if (problems.length) console.warn(`Envanter dosyasında sorunlar (${this.file}): ${problems.join('; ')}`);
+      if (enabledColors(c).length === 0) {
+        console.error(
+          `!!! Envanter dosyası (${this.file}) hiç kullanılabilir renk vermiyor (1x1 plakası açık renk yok). ` +
+            'VARSAYILAN KATALOG KULLANILIYOR, dosya düzeltilmeli.',
+        );
+        this.catalog = defaultCatalog();
+        return;
+      }
+      this.catalog = c;
     } catch (err) {
       console.error('Envanter dosyası okunamadı, varsayılan katalog kullanılıyor:', err);
       this.catalog = defaultCatalog();

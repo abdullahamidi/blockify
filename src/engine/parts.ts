@@ -1,29 +1,63 @@
-// Kullanılan evrensel tuğla tipleri (standart 8 mm modül, 9.6 mm yükseklik).
+// Kullanılan evrensel parça tipleri (standart 8 mm modül).
+// Tuğla 9.6 mm (h: 3 plaka), plaka 3.2 mm (h: 1 plaka) yüksekliğindedir.
 // `ref` tedarik/arama için yaygın kullanılan parça numarasıdır (yalnızca iç kullanım).
 
+export type PartKind = 'brick' | 'plate' | 'baseplate';
+
 export interface PartType {
-  id: string; // "2x4" gibi, küçük boyut önce
+  id: string; // "2x4", "p2x4" gibi, küçük boyut önce
+  kind: PartKind;
   name: string;
   w: number; // kısa kenar (stud)
   l: number; // uzun kenar (stud)
+  h: 1 | 3; // yükseklik (plaka cinsinden)
   ref: string;
 }
 
-export const PARTS: PartType[] = [
-  { id: '2x4', name: 'Tuğla 2x4', w: 2, l: 4, ref: '3001' },
-  { id: '2x3', name: 'Tuğla 2x3', w: 2, l: 3, ref: '3002' },
-  { id: '1x6', name: 'Tuğla 1x6', w: 1, l: 6, ref: '3009' },
-  { id: '2x2', name: 'Tuğla 2x2', w: 2, l: 2, ref: '3003' },
-  { id: '1x4', name: 'Tuğla 1x4', w: 1, l: 4, ref: '3010' },
-  { id: '1x3', name: 'Tuğla 1x3', w: 1, l: 3, ref: '3622' },
-  { id: '1x2', name: 'Tuğla 1x2', w: 1, l: 2, ref: '3004' },
-  { id: '1x1', name: 'Tuğla 1x1', w: 1, l: 1, ref: '3005' },
+function brick(w: number, l: number, ref: string): PartType {
+  return { id: `${w}x${l}`, kind: 'brick', name: `Tuğla ${w}x${l}`, w, l, h: 3, ref };
+}
+
+function plate(w: number, l: number, ref: string): PartType {
+  return { id: `p${w}x${l}`, kind: 'plate', name: `Plaka ${w}x${l}`, w, l, h: 1, ref };
+}
+
+function baseplate(w: number, l: number, ref: string): PartType {
+  return { id: `plate${w}x${l}`, kind: 'baseplate', name: `Plaka ${w}x${l} (kaide)`, w, l, h: 1, ref };
+}
+
+export const BRICKS: PartType[] = [
+  brick(1, 1, '3005'),
+  brick(1, 2, '3004'),
+  brick(1, 3, '3622'),
+  brick(1, 4, '3010'),
+  brick(1, 6, '3009'),
+  brick(2, 2, '3003'),
+  brick(2, 3, '3002'),
+  brick(2, 4, '3001'),
 ];
 
-/** Kaide için tek parça plaka (3.2 mm yükseklik) */
-export const BASE_PLATE: PartType = { id: 'plate8x8', name: 'Plaka 8x8 (kaide)', w: 8, l: 8, ref: '41539' };
+export const PLATES: PartType[] = [
+  plate(1, 1, '3024'),
+  plate(1, 2, '3023'),
+  plate(1, 3, '3623'),
+  plate(1, 4, '3710'),
+  plate(1, 6, '3666'),
+  plate(2, 2, '3022'),
+  plate(2, 3, '3021'),
+  plate(2, 4, '3020'),
+];
 
-const byId = new Map([...PARTS, BASE_PLATE].map((p) => [p.id, p]));
+export const BASEPLATES: PartType[] = [
+  baseplate(8, 8, '41539'),
+  baseplate(8, 16, '92438'),
+  baseplate(16, 16, '91405'),
+];
+
+/** Döşenebilir parçalar: tuğla + plaka */
+export const PARTS: PartType[] = [...BRICKS, ...PLATES];
+
+const byId = new Map([...PARTS, ...BASEPLATES].map((p) => [p.id, p]));
 
 export function getPart(id: string): PartType {
   const p = byId.get(id);
@@ -31,10 +65,10 @@ export function getPart(id: string): PartType {
   return p;
 }
 
-export function partForFootprint(sx: number, sz: number): PartType | undefined {
+export function partForFootprint(sx: number, sz: number, kind: 'brick' | 'plate'): PartType | undefined {
   const w = Math.min(sx, sz);
   const l = Math.max(sx, sz);
-  return PARTS.find((p) => p.w === w && p.l === l);
+  return PARTS.find((p) => p.kind === kind && p.w === w && p.l === l);
 }
 
 /** Standart ölçüler (mm) */

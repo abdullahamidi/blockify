@@ -63,6 +63,16 @@ export class VoxelGrid {
         for (let x = x0; x <= x1; x++) if (this.get(x, y, z) !== EMPTY) this.set(x, y, z, code);
   }
 
+  /** Kaynaktaki dolu hücreleri (dx, dy, dz) kaydırmasıyla kopyalar; boş hücreler hedefe dokunmaz. */
+  paste(src: VoxelGrid, dx: number, dy: number, dz: number): void {
+    for (let y = 0; y < src.h; y++)
+      for (let z = 0; z < src.d; z++)
+        for (let x = 0; x < src.w; x++) {
+          const c = src.cells[src.idx(x, y, z)];
+          if (c !== EMPTY) this.set(x + dx, y + dy, z + dz, c);
+        }
+  }
+
   count(): number {
     let n = 0;
     for (const c of this.cells) if (c !== EMPTY) n++;

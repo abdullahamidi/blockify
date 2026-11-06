@@ -1,5 +1,5 @@
 import { EMPTY, VoxelGrid, colorCode } from '../voxels';
-import { FigureDesign, faceValue } from './design';
+import { FigureDesign } from './design';
 import { eyeCellsOf, eyeCenterRow, headDims } from './head';
 
 /** Ön saç çizgisinin yüksekliği (v), hairline 0..2. */
@@ -103,7 +103,7 @@ function addBun(head: VoxelGrid, W: number, D: number, H: number, hair: number):
  */
 export function applyGlasses(head: VoxelGrid, design: FigureDesign): void {
   if (!design.glasses) return;
-  const { W, D, H } = headDims(design.size);
+  const { W, D } = headDims(design.size);
   const cx = (W + 1) / 2;
   const cz = (D + 1) / 2;
   const color = colorCode(design.glassesColor);

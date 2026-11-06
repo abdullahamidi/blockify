@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { EMPTY, VoxelGrid, colorCode, frontView } from '../voxels';
 import { FigureDesign, SIZES, faceValue, sanitizeDesign } from './design';
-import { buildHead, headDims, skinShade } from './head';
+import { buildHead, headDims, mouthColors } from './head';
 
 type Side = 'L' | 'R';
 interface FaceCell {
@@ -61,7 +61,7 @@ function countSide(f: Int16Array, d: FigureDesign, color: string, side: Side): n
   return cells(f, d).filter((p) => onSide(p.u, side) && p.c === c).length;
 }
 
-const lipColor = (d: FigureDesign) => (d.skin === 'reddishBrown' || d.skin === 'darkBrown' ? 'black' : 'reddishBrown');
+const lipColor = (d: FigureDesign) => mouthColors(d).line;
 
 /** Köşe sütunları |u| > 0.6 * mouthWidth; küçük boyutta köşe, dudak çizgisi rengini taşıyan en dış sütundur. */
 function mouthCornerTop(d: FigureDesign): number {
@@ -103,9 +103,25 @@ function hairOnlyBetween(d: FigureDesign, lo: 'mouth', hi: 'nose'): boolean {
  */
 function mouthCells(d: FigureDesign): FaceCell[] {
   const twin = sanitizeDesign({ ...d, facialHair: 'none' });
-  const codes = [colorCode(lipColor(d)), colorCode('white'), colorCode(skinShade(d.skin))];
+  const codes = [colorCode(mouthColors(twin).line), colorCode('white'), colorCode(mouthColors(twin).lowerLip)];
   const nb = faceValue(d, 'noseBottom');
   return cells(face(twin), twin).filter((p) => p.v < nb && codes.includes(p.c));
+}
+
+/**
+ * Ağzın orta iki sütunundaki dudak çizgisi ve alt dudak hücreleri (ifade nötr, köşe kayması yok).
+ * Satırlar kafadaki kuralla aynı: çizgi [mouthHeight, +0.028) bandı ya da en yakın satır; alt dudak
+ * [mouthHeight − 0.045, mouthHeight) bandının çizgi olmayan satırları.
+ */
+function lipRows(d: FigureDesign): { line: FaceCell[]; lower: FaceCell[] } {
+  const { W, H } = headDims(d.size);
+  const mh = faceValue(d, 'mouthHeight');
+  const rows = (lo: number, hi: number) => [...Array(H).keys()].filter((y) => (y + 0.5) / H >= lo && (y + 0.5) / H < hi);
+  const lineRows = rows(mh, mh + 0.028);
+  if (!lineRows.length) lineRows.push(Math.round(mh * H - 0.5));
+  const lowerRows = rows(mh - 0.045, mh).filter((y) => !lineRows.includes(y));
+  const mid = cells(face(d), d).filter((p) => p.x === W / 2 || p.x === W / 2 + 1);
+  return { line: mid.filter((p) => lineRows.includes(p.y)), lower: mid.filter((p) => lowerRows.includes(p.y)) };
 }
 
 function hasCellAtZ(g: VoxelGrid, z: number, color: string): boolean {
@@ -207,6 +223,45 @@ describe('kafa ve yüz', () => {
     expect(hairCellsBelow(m('mustache'), faceValue(m('mustache'), 'eyeHeight'))).toBeGreaterThan(0);
     expect(hairCellsBelow(m('fullBeard'), 0.2)).toBeGreaterThan(0);
     expect(hasCellAtZ(buildHead(m('fullBeard')), headDims('M').D + 1, m('fullBeard').hairColor)).toBe(true);
+  });
+  it('koyu ten ve sakalda ağız okunur: dudak çizgisi ve alt dudak saç renginden ve birbirinden farklı', () => {
+    for (const o of [
+      { skin: 'darkBrown', hairColor: 'black', facialHair: 'fullBeard' },
+      { skin: 'mediumNougat', hairColor: 'reddishBrown', facialHair: 'fullBeard' },
+    ])
+      for (const size of SIZES) {
+        const d = sanitizeDesign({ ...o, size });
+        const msg = JSON.stringify({ ...o, size });
+        const { line, lower } = lipRows(d);
+        expect(line.length, msg).toBeGreaterThan(0);
+        expect(lower.length, msg).toBeGreaterThan(0);
+        const lineC = new Set(line.map((p) => p.c));
+        const lowerC = new Set(lower.map((p) => p.c));
+        expect(lineC.size, msg).toBe(1);
+        expect(lowerC.size, msg).toBe(1);
+        const [lc] = lineC;
+        const [wc] = lowerC;
+        for (const c of [lc, wc]) {
+          expect(c, msg).not.toBe(colorCode(d.hairColor));
+          expect(c, msg).not.toBe(colorCode(d.skin));
+        }
+        expect(lc, msg).not.toBe(wc);
+        expect([lc, wc], msg).toEqual([colorCode(mouthColors(d).line), colorCode(mouthColors(d).lowerLip)]);
+      }
+  });
+  it('ağız renkleri: sakalsız koyu tende alt dudak ten gölgesi kalır, renkler hep tenden farklıdır', () => {
+    expect(mouthColors(sanitizeDesign({ skin: 'darkBrown' }))).toEqual({ line: 'reddishBrown', lowerLip: 'black' });
+    expect(mouthColors(sanitizeDesign({ skin: 'lightNougat' }))).toEqual({ line: 'reddishBrown', lowerLip: 'nougat' });
+    expect(mouthColors(sanitizeDesign({ skin: 'darkBrown', hairColor: 'black', facialHair: 'fullBeard' }))).toEqual({ line: 'reddishBrown', lowerLip: 'nougat' });
+    for (const skin of ['lightNougat', 'nougat', 'tan', 'mediumNougat', 'reddishBrown', 'darkBrown'])
+      for (const hairColor of ['black', 'darkBrown', 'reddishBrown', 'mediumNougat', 'nougat', 'darkRed'])
+        for (const facialHair of ['none', 'mustache', 'fullBeard']) {
+          const d = sanitizeDesign({ skin, hairColor, facialHair });
+          const { line, lowerLip } = mouthColors(d);
+          const avoid = facialHair === 'none' ? [skin] : [skin, hairColor];
+          expect(avoid, JSON.stringify({ skin, hairColor, facialHair })).not.toContain(line);
+          expect([...avoid, line], JSON.stringify({ skin, hairColor, facialHair })).not.toContain(lowerLip);
+        }
   });
   it('dolgun sakal hacmi ağzın (alt dudak, çizgi, diş) önüne gelmez; renk eşleşse bile', () => {
     for (const o of [

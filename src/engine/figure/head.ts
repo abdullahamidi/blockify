@@ -24,9 +24,22 @@ const SKIN_SHADE: Record<string, string> = {
   darkBrown: 'black',
 };
 
-/** Tenin bir ton koyusu (alt dudak, burun altı, göz kapağı, kulak içi). Eşlemede olmayan ten kendisi kalır. */
+/** Tenin bir ton koyusu (burun altı, göz kapağı, kulak içi; alt dudağın ilk adayı). Eşlemede olmayan ten kendisi kalır. */
 export function skinShade(skin: string): string {
   return SKIN_SHADE[skin] ?? skin;
+}
+
+/**
+ * Ağzın renkleri; ağız her tende ve yüz kılında okunur kalsın diye. Dudak çizgisi (köşeler dahil):
+ * adaylardan tenden ve (yüz kılı varsa) saç renginden farklı ilki. Alt dudak: tenden, dudak çizgisinden
+ * ve (yüz kılı varsa) saç renginden farklı ilk aday.
+ */
+export function mouthColors(design: FigureDesign): { line: string; lowerLip: string } {
+  const hair = design.facialHair !== 'none' ? design.hairColor : null;
+  const pick = (candidates: string[], avoid: (string | null)[]) => candidates.find((c) => !avoid.includes(c)) ?? candidates[0];
+  const line = pick(['reddishBrown', 'black', 'darkRed'], [design.skin, hair]);
+  const lowerLip = pick([skinShade(design.skin), 'nougat', 'darkRed', 'mediumNougat'], [design.skin, line, hair]);
+  return { line, lowerLip };
 }
 
 const EYE_HALF_HEIGHT = [0.018, 0.028, 0.04];
@@ -40,7 +53,9 @@ interface Codes {
   hair: number;
   black: number;
   white: number;
+  /** Dudak çizgisi ve gülümseme köşeleri */
   lip: number;
+  lowerLip: number;
 }
 
 /** Sakalın üst sınırı (v). a: önden açı (derece). Prototipteki eğrinin eşiklerine `off` eklenir; 140°'nin arkasında sakal yok. */
@@ -164,7 +179,7 @@ function facePainter(design: FigureDesign, W: number, H: number, k: Codes, isFac
     if (isLine(yy)) return k.lip;
     const v = (yy + 0.5) / H;
     if (teeth && v >= mouthHeight - 0.03 && v < mouthHeight && au <= 0.8 * mouthWidth) return k.white;
-    if (v >= mouthHeight - 0.045 && v < mouthHeight) return k.shade;
+    if (v >= mouthHeight - 0.045 && v < mouthHeight) return k.lowerLip;
     return EMPTY;
   }
 
@@ -245,13 +260,15 @@ export function buildHead(design: FigureDesign): VoxelGrid {
   const g = new VoxelGrid(W + 2, H + Math.ceil(H * 0.15), D + 2);
   const cx = (W + 1) / 2;
   const cz = (D + 1) / 2;
+  const lips = mouthColors(design);
   const k: Codes = {
     skin: colorCode(design.skin),
     shade: colorCode(skinShade(design.skin)),
     hair: colorCode(design.hairColor),
     black: colorCode('black'),
     white: colorCode('white'),
-    lip: colorCode(design.skin === 'reddishBrown' || design.skin === 'darkBrown' ? 'black' : 'reddishBrown'),
+    lip: colorCode(lips.line),
+    lowerLip: colorCode(lips.lowerLip),
   };
   const crown = faceValue(design, 'crownRound');
   const chin = faceValue(design, 'chinTaper');

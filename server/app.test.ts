@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { createApp } from './app';
 import { CatalogStore } from './catalogStore';
+import { SIZES, defaultCatalog } from '../src/engine/index';
 import type { Order } from '../src/shared/orders';
 import { OrderStore } from './store';
 import { config } from './config';
@@ -59,9 +60,20 @@ const INVENTORY = {
   ],
 };
 
+/** Varsayılan katalog, ama kaide plakalarından yalnızca 16x16 açık (S ve M'de kaide yok). */
+const ONLY_16X16_BASE = {
+  items: [...defaultCatalog().enabled]
+    .filter((k) => !k.startsWith('plate8x8|') && !k.startsWith('plate8x16|'))
+    .map((k) => {
+      const [part, color] = k.split('|');
+      return { part, color, enabled: true };
+    }),
+};
+
 let base = '';
 let base2 = '';
 let base3 = '';
+let base4 = '';
 async function start(dir: string): Promise<{ url: string; close: () => void }> {
   const store = new OrderStore(dir);
   await store.init();
@@ -78,14 +90,18 @@ beforeAll(async () => {
   writeFileSync(join(d2, 'inventory.json'), JSON.stringify(INVENTORY));
   const d3 = tmp();
   writeFileSync(join(d3, 'orders.json'), JSON.stringify([V1_ORDER]));
-  const [a, b, c] = await Promise.all([start(tmp()), start(d2), start(d3)]);
+  const d4 = tmp();
+  writeFileSync(join(d4, 'inventory.json'), JSON.stringify(ONLY_16X16_BASE));
+  const [a, b, c, e] = await Promise.all([start(tmp()), start(d2), start(d3), start(d4)]);
   base = a.url;
   base2 = b.url;
   base3 = c.url;
+  base4 = e.url;
   return () => {
     a.close();
     b.close();
     c.close();
+    e.close();
   };
 });
 
@@ -109,6 +125,24 @@ describe('API', () => {
     expect(j.sizes.M.total).toBeGreaterThan(j.sizes.S.total);
     expect(j.price.total).toBe(j.sizes.S.total);
     expect(j.price.partsCost).toBe(0);
+  });
+
+  it('boyut etiketindeki fiyat, o boyut seçilince gelen teklif ve sipariş tutarıyla aynıdır (kaide yalnızca L için açık)', async () => {
+    const design = { hairStyle: 'medium', base: true };
+    const quotes = {} as Record<string, Json>;
+    // M önce istenir: L'nin teklifi aynı önbellek kaydından kurulur
+    for (const size of ['M', 'S', 'L'] as const) quotes[size] = await json(await post('/quote', { design: { ...design, size } }, {}, base4));
+    expect(quotes.M.design.base).toBe(false);
+    expect(quotes.L.design.base).toBe(true);
+    for (const size of SIZES) {
+      expect(quotes[size].design.size).toBe(size);
+      expect(quotes[size].price.total).toBe(quotes[size].sizes[size].total);
+      expect(quotes[size].stats.brickCount).toBe(quotes[size].sizes[size].brickCount);
+      for (const selected of SIZES) expect(quotes[selected].sizes[size].total, `${selected} seçiliyken ${size} etiketi`).toBe(quotes[size].price.total);
+      const r = await post('/orders', { design: { ...design, size }, customer, consent: { kvkk: true } }, {}, base4);
+      expect(r.status).toBe(201);
+      expect((await json(r)).total, `${size} sipariş tutarı`).toBe(quotes[size].price.total);
+    }
   });
 
   it('aynı teklif isteği önbellekten aynı gövdeyi döner', async () => {

@@ -21,6 +21,12 @@ import { ValidationError, parseJpegDataUrl, validateCustomer } from './validate'
 
 type Config = typeof appConfig;
 
+/** Teklif önbelleği kaydı: her boyutun yanıt parçaları ayrı tutulur, yanıt istenen boyuta göre kurulur. */
+interface QuoteEntry {
+  perSize: Record<FigureSize, Pick<QuoteResponse, 'design' | 'price' | 'stats'>>;
+  sizes: QuoteResponse['sizes'];
+}
+
 /** Basit IP başına istek sınırlayıcı */
 function rateLimit(max: number, windowMs: number) {
   const hits = new Map<string, number[]>();
@@ -81,7 +87,7 @@ export function createApp(store: OrderStore, catalogs: CatalogStore, config: Con
   app.use(express.json({ limit: '1mb' }));
 
   const api = express.Router();
-  const quoteCache = new LruCache<QuoteResponse>(200);
+  const quoteCache = new LruCache<QuoteEntry>(200);
 
   api.get('/health', (_req, res) => {
     res.json({ ok: true });
@@ -106,31 +112,28 @@ export function createApp(store: OrderStore, catalogs: CatalogStore, config: Con
 
   // Fiyat teklifi: tasarım sunucuda yeniden üretilir, istemcinin hesabına güvenilmez.
   // Üç boyutun da fiyatı döner; iç maliyet (partsCost) gizlenir.
+  // Her boyut, siparişte olacağı gibi kataloğa kendi boyutuyla uydurulur (ör. kaide plakası yalnızca
+  // bazı boyutlarda açıksa). Böylece boyut etiketindeki fiyat, o boyut seçilince alınan fiyatla aynıdır.
   api.post('/quote', rateLimit(120, 60_000), (req, res) => {
     const catalog = catalogs.get();
-    const design = sanitizeDesign(req.body?.design, catalog);
-    const cacheKey = `${catalogs.version()}|${JSON.stringify(design)}`;
-    const hit = quoteCache.get(cacheKey);
-    if (hit) {
-      res.json(hit);
-      return;
+    const norm = sanitizeDesign(req.body?.design);
+    const { size: _size, ...rest } = norm;
+    // Anahtarda boyut yok: boyut değiştirmek de önbellekten döner.
+    const cacheKey = `${catalogs.version()}|${JSON.stringify(rest)}`;
+    let entry = quoteCache.get(cacheKey);
+    if (!entry) {
+      const perSize = {} as QuoteEntry['perSize'];
+      const sizes = {} as QuoteResponse['sizes'];
+      for (const size of SIZES) {
+        const m = generateModel({ ...norm, size }, catalog);
+        const price = priceFor(m.bom, config.pricing);
+        perSize[size] = { design: m.design, price: { ...price, partsCost: 0 }, stats: m.stats };
+        sizes[size] = { total: price.total, heightMm: m.stats.heightMm, brickCount: m.stats.brickCount };
+      }
+      entry = { perSize, sizes };
+      quoteCache.set(cacheKey, entry);
     }
-    const models = {} as Record<FigureSize, ReturnType<typeof generateModel>>;
-    const prices = {} as Record<FigureSize, ReturnType<typeof priceFor>>;
-    const sizes = {} as QuoteResponse['sizes'];
-    for (const size of SIZES) {
-      const m = generateModel({ ...design, size }, catalog);
-      models[size] = m;
-      prices[size] = priceFor(m.bom, config.pricing);
-      sizes[size] = { total: prices[size].total, heightMm: m.stats.heightMm, brickCount: m.stats.brickCount };
-    }
-    const body: QuoteResponse = {
-      design,
-      price: { ...prices[design.size], partsCost: 0 },
-      stats: models[design.size].stats,
-      sizes,
-    };
-    quoteCache.set(cacheKey, body);
+    const body: QuoteResponse = { ...entry.perSize[norm.size], sizes: entry.sizes };
     res.json(body);
   });
 

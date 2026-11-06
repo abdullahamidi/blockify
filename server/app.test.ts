@@ -111,6 +111,12 @@ describe('API', () => {
     expect(j.price.partsCost).toBe(0);
   });
 
+  it('aynı teklif isteği önbellekten aynı gövdeyi döner', async () => {
+    const a = await json(await post('/quote', { design: { size: 'M', hairStyle: 'long' } }));
+    const b = await json(await post('/quote', { design: { size: 'M', hairStyle: 'long' } }));
+    expect(b).toEqual(a);
+  });
+
   it('herkese açık siparişte ve kılavuzda yüz ölçüleri yok, yöneticide var', async () => {
     const r = await post('/orders', { design: { face: { browTilt: 4 } }, customer, consent: { kvkk: true } });
     const { number, accessKey } = await json(r);

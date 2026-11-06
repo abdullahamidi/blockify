@@ -13,6 +13,7 @@ import {
   type QuoteResponse,
   publicDesign,
 } from '../src/shared/orders';
+import { LruCache } from './quoteCache';
 import type { CatalogStore } from './catalogStore';
 import type { config as appConfig } from './config';
 import type { OrderStore } from './store';
@@ -80,6 +81,7 @@ export function createApp(store: OrderStore, catalogs: CatalogStore, config: Con
   app.use(express.json({ limit: '1mb' }));
 
   const api = express.Router();
+  const quoteCache = new LruCache<QuoteResponse>(200);
 
   api.get('/health', (_req, res) => {
     res.json({ ok: true });
@@ -104,9 +106,15 @@ export function createApp(store: OrderStore, catalogs: CatalogStore, config: Con
 
   // Fiyat teklifi: tasarım sunucuda yeniden üretilir, istemcinin hesabına güvenilmez.
   // Üç boyutun da fiyatı döner; iç maliyet (partsCost) gizlenir.
-  api.post('/quote', rateLimit(300, 60_000), (req, res) => {
+  api.post('/quote', rateLimit(120, 60_000), (req, res) => {
     const catalog = catalogs.get();
     const design = sanitizeDesign(req.body?.design, catalog);
+    const cacheKey = `${catalogs.version()}|${JSON.stringify(design)}`;
+    const hit = quoteCache.get(cacheKey);
+    if (hit) {
+      res.json(hit);
+      return;
+    }
     const models = {} as Record<FigureSize, ReturnType<typeof generateModel>>;
     const prices = {} as Record<FigureSize, ReturnType<typeof priceFor>>;
     const sizes = {} as QuoteResponse['sizes'];
@@ -122,6 +130,7 @@ export function createApp(store: OrderStore, catalogs: CatalogStore, config: Con
       stats: models[design.size].stats,
       sizes,
     };
+    quoteCache.set(cacheKey, body);
     res.json(body);
   });
 

@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { formatPrice, getColor, HAIR_STYLE_LABELS, FACIAL_HAIR_LABELS, BOTTOM_STYLE_LABELS } from '../../engine/index';
+import { formatPrice, getColor, HAIR_STYLE_LABELS, BOTTOM_STYLE_LABELS } from '../../engine/index';
 import { ORDER_STATUSES, ORDER_STATUS_LABELS, type Order, type OrderStatus, type OrderSummary } from '../../shared/orders';
 import { adminApi, ApiError } from '../api';
+import { facialHairLabel, sizeLabel } from '../designLabels';
 import { BomTable } from '../components/BomTable';
 import { PrintableInstructions } from '../components/Instructions';
 import { Viewer3D } from '../components/Viewer3D';
@@ -258,11 +259,12 @@ function OrderDetail({ token, number, onAuthError }: { token: string; number: st
             <Viewer3D bricks={order.bricks} />
           </div>
           <ul className="design-summary small">
+            <li>Boy: {sizeLabel(d.size)}</li>
             <li>Ten: {getColor(d.skin).name}</li>
             <li>
               Saç: {HAIR_STYLE_LABELS[d.hairStyle]}, {getColor(d.hairColor).name}
             </li>
-            <li>Sakal: {FACIAL_HAIR_LABELS[d.facialHair]}</li>
+            <li>Sakal: {facialHairLabel(d.facialHair)}</li>
             <li>Gözlük: {d.glasses ? getColor(d.glassesColor).name : 'yok'}</li>
             <li>
               Üst: {getColor(d.shirtColor).name}

@@ -1,10 +1,11 @@
 import { useMemo } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useEffect } from 'react';
-import { generateModel } from '../../engine/index';
+import { defaultCatalog, generateModel, type FigureDesign } from '../../engine/index';
 import { Viewer3D } from '../components/Viewer3D';
 
 const HERO_DESIGN = {
+  size: 'S',
   skin: 'nougat',
   hairColor: 'black',
   hairStyle: 'volume',
@@ -19,7 +20,7 @@ const HERO_DESIGN = {
   shoeColor: 'white',
   base: true,
   baseColor: 'darkGray',
-};
+} as FigureDesign;
 
 const FAQ = [
   {
@@ -45,7 +46,7 @@ const FAQ = [
 ];
 
 export function Home() {
-  const model = useMemo(() => generateModel(HERO_DESIGN), []);
+  const model = useMemo(() => generateModel(HERO_DESIGN, defaultCatalog()), []);
   const { hash } = useLocation();
   useEffect(() => {
     if (hash) document.querySelector(hash)?.scrollIntoView({ behavior: 'smooth' });

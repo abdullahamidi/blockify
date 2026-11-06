@@ -1,0 +1,338 @@
+<!doctype html>
+<html><head>
+<!-- Atılabilir prototip (2026-11-06). Yüz sayıları elle ayarlandı; gerçek değerler fotoğraftan gelecek.
+     Kullanım: ?scene=sizes (üç boyut) ya da ?scene=faces (bugünkü şablon ve yeni yüz). Fotoğraf mozaiği reddedildiği için çıkarıldı. --><meta charset="utf-8">
+<style>
+html,body{margin:0;background:#f4f1ea;font-family:"Segoe UI",Arial,sans-serif}
+#wrap{position:relative;width:1600px;height:1000px;overflow:hidden}
+canvas{position:absolute;left:0;top:0}
+.lbl{position:absolute;transform:translateX(-50%);text-align:center;color:#2b2b2b;width:380px}
+.lbl b{display:block;font-size:30px}
+.lbl span{display:block;font-size:21px;color:#5a5a5a;margin-top:4px;line-height:1.3}
+#title{position:absolute;top:20px;left:0;right:0;text-align:center;font-size:36px;font-weight:700;color:#222}
+</style>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"}}</script>
+</head><body><div id="wrap"><div id="title"></div></div>
+<script type="module">
+import * as THREE from 'three';
+
+const PAL = { white:'#F2F3F2', black:'#1F1F22', lightGray:'#A0A5A9', darkGray:'#6C6E68', darkRed:'#720E0F',
+  tan:'#E4CD9E', darkTan:'#958A73', reddishBrown:'#582A12', darkBrown:'#352100', lightNougat:'#F6D7B3',
+  nougat:'#D09168', mediumNougat:'#AA7D55', darkBlue:'#0A3463' };
+const SK='lightNougat', SK2='nougat', HAIR='darkBrown', LIP='nougat', MOUTH='reddishBrown';
+const sceneName = new URLSearchParams(location.search).get('scene') || 'faces';
+
+class Grid {
+  constructor(){ this.m = new Map(); }
+  k(x,y,z){ return x+','+y+','+z; }
+  set(x,y,z,c){ if (c) this.m.set(this.k(x,y,z), c); else this.m.delete(this.k(x,y,z)); }
+  get(x,y,z){ return this.m.get(this.k(x,y,z)); }
+  has(x,y,z){ return this.m.has(this.k(x,y,z)); }
+  each(f){ for (const [k,c] of [...this.m]) { const [x,y,z] = k.split(',').map(Number); f(x,y,z,c); } }
+  bounds(){ const b={x0:1e9,x1:-1e9,y0:1e9,y1:-1e9,z0:1e9,z1:-1e9};
+    this.each((x,y,z)=>{ b.x0=Math.min(b.x0,x); b.x1=Math.max(b.x1,x); b.y0=Math.min(b.y0,y); b.y1=Math.max(b.y1,y); b.z0=Math.min(b.z0,z); b.z1=Math.max(b.z1,z); });
+    return b; }
+  merge(o, dx=0, dy=0, dz=0){ o.each((x,y,z,c)=>this.set(x+dx,y+dy,z+dz,c)); }
+  hidden(x,y,z){ return this.has(x+1,y,z)&&this.has(x-1,y,z)&&this.has(x,y+1,z)&&this.has(x,y-1,z)&&this.has(x,y,z+1)&&this.has(x,y,z-1); }
+}
+
+// ---------- renk ----------
+const lin = c => { c/=255; return c<=0.04045 ? c/12.92 : Math.pow((c+0.055)/1.055, 2.4); };
+function lab([r,g,b]){ const R=lin(r),G=lin(g),B=lin(b);
+  const X=(R*0.4124+G*0.3576+B*0.1805)/0.95047, Y=R*0.2126+G*0.7152+B*0.0722, Z=(R*0.0193+G*0.1192+B*0.9505)/1.08883;
+  const f=t=>t>0.008856?Math.cbrt(t):7.787*t+16/116; const fx=f(X),fy=f(Y),fz=f(Z);
+  return [116*fy-16, 500*(fx-fy), 200*(fy-fz)]; }
+const hex2rgb = h => { const n=parseInt(h.slice(1),16); return [n>>16&255, n>>8&255, n&255]; };
+const MOSAIC_PAL = ['lightNougat','nougat','mediumNougat','tan','darkTan','reddishBrown','darkBrown','black','white','lightGray','darkGray','darkRed']
+  .map(id=>({id, lab:lab(hex2rgb(PAL[id]))}));
+
+function mosaicColor(u,v,W,H){
+  const P=window.PHOTO, du=1/W, dv=0.5/H;
+  const x0=((u-du)+1)/2*P.w, x1=((u+du)+1)/2*P.w, y0=(1-(v+dv))*P.h, y1=(1-(v-dv))*P.h;
+  let s=[0,0,0], n=0;
+  for (let y=Math.max(0,Math.floor(y0)); y<Math.min(P.h,Math.ceil(y1)); y++)
+    for (let x=Math.max(0,Math.floor(x0)); x<Math.min(P.w,Math.ceil(x1)); x++){ const i=(y*P.w+x)*3; s[0]+=P.d[i]; s[1]+=P.d[i+1]; s[2]+=P.d[i+2]; n++; }
+  if (!n) return SK;
+  const L=lab([s[0]/n,s[1]/n,s[2]/n]);
+  let best=SK, bd=1e9;
+  for (const c of MOSAIC_PAL){ const d=(L[0]-c.lab[0])**2*0.8+(L[1]-c.lab[1])**2+(L[2]-c.lab[2])**2; if (d<bd){ bd=d; best=c.id; } }
+  return best;
+}
+
+// ---------- kafa (yeni yaklaşım) ----------
+function beardTop(a){
+  if (a<=22) return 0.37;
+  if (a<=60) return 0.37+(a-22)/38*0.08;
+  if (a<=82) return 0.45+(a-60)/22*0.13;
+  if (a<=100) return 0.58-(a-82)/18*0.30;
+  if (a<=140) return 0.28-(a-100)/40*0.28;
+  return 0;
+}
+function faceFeature(u,v,W,base){
+  const a=Math.abs(u);
+  if (a>=0.16 && a<=0.80){
+    // düz, hafif kavisli kaş: iç uç kalın, dış uç incelip hafifçe iner; ortada boşluk kalır
+    const t=(a-0.16)/0.64;
+    const vc=0.745+0.018*Math.sin(Math.PI*Math.min(1,t*1.25))-0.012*t, th=0.026-0.006*t;
+    if (Math.abs(v-vc)<=th) return HAIR;
+  }
+  if (v>=0.575 && v<=0.632 && a>=0.18 && a<=0.62){
+    if (W<12) return (a>=0.24 && a<=0.56) ? 'black' : base;
+    return (a>=0.30 && a<=0.50) ? 'black' : 'white';
+  }
+  if (W>=12 && v>0.632 && v<=0.66 && a>=0.18 && a<=0.62) return SK2;
+  if (v>=0.445 && v<0.50 && a<=0.22) return SK2;
+  if (v>=0.37 && v<0.445 && a<=0.48) return HAIR;
+  if (v>=0.30 && v<0.37 && a<=0.28) return v>=0.345 ? MOUTH : LIP;
+  return base;
+}
+function headDims(W){ return { W, D: W>=8 ? W-2 : W, H: Math.round(W*3.125) }; }
+function buildHead(W, mode){
+  const {D,H} = headDims(W);
+  const g=new Grid(), cx=(W-1)/2, cz=(D-1)/2;
+  const inside=(x,y,z)=>{
+    const v=(y+0.5)/H; let hw=1, hd=1, czz=cz;
+    if (v>0.78){ const t=(v-0.78)/0.22; const f=Math.sqrt(Math.max(0,1-t*t)); hw=f; hd=f; }
+    if (v<0.26){ const t=(0.26-v)/0.26; hw=1-0.5*t*t; hd=1-0.3*t; czz=cz+(D/2)*(1-hd); }
+    const xn=(x-cx)/((W/2)*hw), zn=(z-czz)/((D/2)*hd);
+    return Math.pow(Math.abs(xn),3)+Math.pow(Math.abs(zn),3) <= 1;
+  };
+  for (let y=0;y<H;y++) for (let x=0;x<W;x++) for (let z=0;z<D;z++) if (inside(x,y,z)) g.set(x,y,z,SK);
+  const isFront=(x,y,z)=>!g.has(x,y,z+1);
+  const cells=[]; g.each((x,y,z)=>cells.push([x,y,z,isFront(x,y,z)]));
+  for (const [x,y,z,front] of cells){
+    const v=(y+0.5)/H, u=(x-cx)/(W/2);
+    const a=Math.abs(Math.atan2(x-cx,(z-cz)*W/D))*180/Math.PI;
+    let c = v<beardTop(a) ? HAIR : SK;
+    if (front && a<55) c = mode==='mosaic' ? mosaicColor(u,v,W,H) : faceFeature(u,v,W,c);
+    g.set(x,y,z,c);
+  }
+  // kulaklar
+  for (let y=0;y<H;y++){
+    const v=(y+0.5)/H; if (v<0.30 || v>0.54) continue;
+    const z0=Math.round(cz-D*0.15), z1=Math.round(cz+D*0.05);
+    for (let z=z0; z<=z1; z++){
+      let xmin=1e9, xmax=-1e9;
+      for (let x=0;x<W;x++) if (g.has(x,y,z)){ xmin=Math.min(xmin,x); xmax=Math.max(xmax,x); }
+      if (xmin>xmax) continue;
+      const inner = (W>=12 && v>0.35 && v<0.49 && z>z0 && z<z1) ? SK2 : SK;
+      g.set(xmin-1,y,z,inner); g.set(xmax+1,y,z,inner);
+    }
+  }
+  if (mode!=='mosaic' && W>=12){
+    // burun ve sakal hacmi
+    const frontZ=(x,y)=>{ for (let z=D+2; z>=0; z--) if (g.has(x,y,z)) return z; return -1; };
+    for (let y=0;y<H;y++) for (let x=0;x<W;x++){
+      const v=(y+0.5)/H, u=(x-cx)/(W/2), fz=frontZ(x,y); if (fz<0) continue;
+      if (Math.abs(u)<=0.2 && v>=0.45 && v<0.585) g.set(x,y,fz+1, v<0.50 ? SK2 : SK);
+      else if (v<0.335 && Math.abs(u)<=0.8 && g.get(x,y,fz)===HAIR) g.set(x,y,fz+1,HAIR);
+    }
+  }
+  return g;
+}
+
+// ---------- şu anki şablon (bugünkü kodun kafası, kel + sakal) ----------
+function buildCurrentHead(){
+  const g=new Grid(), B=3;
+  const setB=(x,r,z,c)=>{ for (let p=0;p<B;p++) g.set(x,r*B+p,z,c); };
+  const fillB=(x0,x1,r0,r1,z0,z1,c)=>{ for (let r=r0;r<=r1;r++) for (let x=x0;x<=x1;x++) for (let z=z0;z<=z1;z++) setB(x,r,z,c); };
+  const paintB=(x0,x1,r0,r1,z0,z1,c)=>{ for (let r=r0;r<=r1;r++) for (let x=x0;x<=x1;x++) for (let z=z0;z<=z1;z++) if (g.has(x,r*B,z)) setB(x,r,z,c); };
+  fillB(1,8,0,7,1,8,SK);
+  setB(3,3,8,'black'); setB(6,3,8,'black'); setB(4,1,8,'darkRed'); setB(5,1,8,'darkRed');
+  for (let x=2;x<=7;x++) setB(x,0,8,HAIR);
+  for (const x of [2,3,6,7]) setB(x,1,8,HAIR);
+  for (const x of [2,4,5,7]) setB(x,2,8,HAIR);
+  paintB(1,1,0,3,4,8,HAIR); paintB(8,8,0,3,4,8,HAIR); paintB(1,8,0,0,4,8,HAIR);
+  for (let r=0;r<8;r++) for (const [x,z] of [[1,1],[8,1],[1,8],[8,8]]) for (let p=0;p<B;p++) g.set(x,r*B+p,z,null);
+  return g;
+}
+
+// ---------- tam figür ----------
+function buildFigure(W){
+  const {D,H}=headDims(W);
+  const g=new Grid();
+  const TW=2*Math.round(W*0.35), TD=Math.max(4,2*Math.round(W*0.25)), TH=Math.round(H*0.6), LH=Math.round(H*0.42), NH=Math.max(1,Math.round(H*0.05));
+  const x0=(W-TW)/2, z0=(D-TD)/2, tcx=x0+(TW-1)/2;
+  // kaide
+  for (let x=x0-3;x<=x0+TW+2;x++) for (let z=z0-3;z<=z0+TD+2;z++) g.set(x,0,z,'darkGray');
+  // bacaklar
+  const gap=TW>=8?2:0, LW=(TW-gap)/2;
+  for (const lx of [x0, x0+LW+gap]) for (let x=lx;x<lx+LW;x++){
+    for (let y=1;y<=LH;y++) for (let z=z0+1;z<=z0+TD-2;z++) g.set(x,y,z, y<=3 ? 'darkBrown' : 'white');
+    for (let y=1;y<=3;y++) g.set(x,y,z0+TD-1,'darkBrown');
+  }
+  // gövde
+  const yT0=LH+1, yT1=LH+TH;
+  for (let y=yT0;y<=yT1;y++) for (let x=x0;x<x0+TW;x++) for (let z=z0;z<z0+TD;z++){
+    if (TW>=8 && (x===x0||x===x0+TW-1) && (z===z0||z===z0+TD-1)) continue;
+    const ut=(x-tcx)/(TW/2), vt=(y-yT0+0.5)/TH;
+    let c='tan';
+    if (z===z0+TD-1){
+      const openW=0.2+0.28*Math.max(0,(vt-0.5)/0.5);
+      if (Math.abs(ut)<openW) c='darkBlue';
+      if (vt>0.86 && Math.abs(ut)<0.12+(vt-0.86)*1.2) c=SK;
+      if (W>=12 && vt<0.07 && c==='tan') c='darkTan';
+      if (W>=12 && vt>0.62 && Math.abs(ut)>=openW && Math.abs(ut)<openW+0.22) g.set(x,y,z+1,'tan');
+    }
+    g.set(x,y,z,c);
+  }
+  // kollar
+  const AW=Math.max(2,Math.round(W*0.17)), AD=Math.min(TD-2,AW+1), az0=z0+(TD-AD)/2;
+  const ay0=yT0+Math.round(TH*0.05), ay1=yT1-Math.max(1,Math.round(TH*0.06));
+  for (const [ax0,ax1] of [[x0-AW,x0-1],[x0+TW,x0+TW+AW-1]])
+    for (let x=ax0;x<=ax1;x++) for (let y=ay0;y<=ay1;y++) for (let z=Math.floor(az0);z<Math.floor(az0)+AD;z++){
+      let c = y<ay0+3 ? SK : 'tan';
+      if (W>=12 && y===ay0+3) c='darkTan';
+      g.set(x,y,z,c);
+    }
+  // boyun
+  const NW=Math.max(2,2*Math.round(W*0.18)), nx0=(W-NW)/2, ND=Math.max(2,NW-2), nz0=Math.round((D-ND)/2);
+  for (let y=yT1+1;y<=yT1+NH;y++) for (let x=nx0;x<nx0+NW;x++) for (let z=nz0;z<nz0+ND;z++) g.set(x,y,z,SK);
+  g.merge(buildHead(W,'styl'),0,yT1+NH+1,0);
+  return g;
+}
+
+// ---------- kaba parça tahmini (tuğla + plaka, açgözlü) ----------
+function estimateParts(g){
+  const ANY='*', cell=new Map();
+  g.each((x,y,z,c)=>cell.set(x+','+y+','+z, g.hidden(x,y,z)?ANY:c));
+  const b=g.bounds(), used=new Set();
+  const sizes=[[2,4],[4,2],[2,3],[3,2],[2,2],[1,4],[4,1],[1,3],[3,1],[1,2],[2,1],[1,1]];
+  const fits=(x,y,z,sx,sz,h)=>{ let c0=ANY; for (let dy=0;dy<h;dy++) for (let dz=0;dz<sz;dz++) for (let dx=0;dx<sx;dx++){
+      const k=(x+dx)+','+(y+dy)+','+(z+dz); if (used.has(k)) return false; const c=cell.get(k); if (c===undefined) return false;
+      if (c!==ANY){ if (c0===ANY) c0=c; else if (c!==c0) return false; } } return true; };
+  let n=0;
+  for (let y=b.y0;y<=b.y1;y++) for (let z=b.z0;z<=b.z1;z++) for (let x=b.x0;x<=b.x1;x++){
+    const k=x+','+y+','+z; if (!cell.has(k)||used.has(k)) continue;
+    let done=false;
+    for (const h of ((y-b.y0)%3===0?[3,1]:[1])){ for (const [sx,sz] of sizes){ if (fits(x,y,z,sx,sz,h)){
+      for (let dy=0;dy<h;dy++) for (let dz=0;dz<sz;dz++) for (let dx=0;dx<sx;dx++) used.add((x+dx)+','+(y+dy)+','+(z+dz));
+      n++; done=true; break; } } if (done) break; }
+  }
+  return n;
+}
+
+// ---------- çizim ----------
+const S=8, PH=3.2;
+function mergeLayer(cells, y){
+  const keys=[...cells.keys()].map(s=>s.split(',').map(Number)).sort((a,b)=>a[1]-b[1]||a[0]-b[0]);
+  const used=new Set(), out=[];
+  const base=[[2,4],[2,3],[1,4],[2,2],[1,3],[1,2],[1,1]];
+  const sizes=[]; for (const [a,b] of base){ const p = y%2 ? [a,b] : [b,a]; sizes.push(p); if (a!==b) sizes.push([p[1],p[0]]); }
+  for (const [x,z] of keys){
+    if (used.has(x+','+z)) continue; const c=cells.get(x+','+z);
+    for (const [sx,sz] of sizes){
+      let ok=true;
+      for (let dz=0;dz<sz&&ok;dz++) for (let dx=0;dx<sx;dx++){ const kk=(x+dx)+','+(z+dz); if (used.has(kk)||cells.get(kk)!==c){ ok=false; break; } }
+      if (!ok) continue;
+      for (let dz=0;dz<sz;dz++) for (let dx=0;dx<sx;dx++) used.add((x+dx)+','+(z+dz));
+      out.push({x,y,z,sx,sz,c}); break;
+    }
+  }
+  return out;
+}
+const mats=new Map();
+const mat=c=>{ if (!mats.has(c)) mats.set(c,new THREE.MeshStandardMaterial({color:new THREE.Color(PAL[c]),roughness:0.36,metalness:0})); return mats.get(c); };
+function addModel(root, g, ox){
+  const layers=new Map(), studs=[];
+  g.each((x,y,z,c)=>{
+    if (!g.has(x,y+1,z)) studs.push([x,y,z,c]);
+    if (g.hidden(x,y,z)) return;
+    if (!layers.has(y)) layers.set(y,new Map()); layers.get(y).set(x+','+z,c);
+  });
+  const boxes=[]; for (const [y,cells] of layers) boxes.push(...mergeLayer(cells,y));
+  const groups=new Map();
+  for (const b of boxes){ const k=b.sx+'|'+b.sz+'|'+b.c; if (!groups.has(k)) groups.set(k,[]); groups.get(k).push(b); }
+  const m4=new THREE.Matrix4();
+  for (const [k,list] of groups){
+    const [sx,sz,c]=k.split('|');
+    const geo=new THREE.BoxGeometry(sx*S-0.3, PH-0.14, sz*S-0.3);
+    const im=new THREE.InstancedMesh(geo, mat(c), list.length);
+    list.forEach((b,i)=>{ m4.makeTranslation(ox+(b.x+b.sx/2)*S, (b.y+0.5)*PH, (b.z+b.sz/2)*S); im.setMatrixAt(i,m4); });
+    root.add(im);
+  }
+  const sg=new THREE.CylinderGeometry(2.4,2.4,1.7,18), byC=new Map();
+  for (const s of studs){ if (!byC.has(s[3])) byC.set(s[3],[]); byC.get(s[3]).push(s); }
+  for (const [c,list] of byC){
+    const im=new THREE.InstancedMesh(sg, mat(c), list.length);
+    list.forEach(([x,y,z],i)=>{ m4.makeTranslation(ox+(x+0.5)*S, (y+1)*PH+0.85, (z+0.5)*S); im.setMatrixAt(i,m4); });
+    root.add(im);
+  }
+  const pts=[];
+  for (const b of boxes){
+    const x0=ox+b.x*S+0.15, x1=ox+(b.x+b.sx)*S-0.15, y0=b.y*PH+0.07, y1=(b.y+1)*PH-0.07, z0=b.z*S+0.15, z1=(b.z+b.sz)*S-0.15;
+    const E=[[x0,y0,z0,x1,y0,z0],[x0,y1,z0,x1,y1,z0],[x0,y0,z1,x1,y0,z1],[x0,y1,z1,x1,y1,z1],
+             [x0,y0,z0,x0,y1,z0],[x1,y0,z0,x1,y1,z0],[x0,y0,z1,x0,y1,z1],[x1,y0,z1,x1,y1,z1],
+             [x0,y0,z0,x0,y0,z1],[x1,y0,z0,x1,y0,z1],[x0,y1,z0,x0,y1,z1],[x1,y1,z0,x1,y1,z1]];
+    for (const e of E) pts.push(...e);
+  }
+  const lg=new THREE.BufferGeometry(); lg.setAttribute('position',new THREE.Float32BufferAttribute(pts,3));
+  root.add(new THREE.LineSegments(lg,new THREE.LineBasicMaterial({color:0x000000,transparent:true,opacity:0.16})));
+}
+
+function render(title, models, opts={}){
+  document.getElementById('title').textContent=title;
+  const Wpx=1600, Hpx=opts.h||1000; document.getElementById("wrap").style.height=Hpx+"px";
+  const renderer=new THREE.WebGLRenderer({antialias:true, preserveDrawingBuffer:true});
+  renderer.setPixelRatio(1); renderer.setSize(Wpx,Hpx); renderer.setClearColor(0xf4f1ea);
+  document.getElementById('wrap').prepend(renderer.domElement);
+  const scene=new THREE.Scene();
+  scene.add(new THREE.HemisphereLight(0xffffff,0x8a8f9c,1.6));
+  const key=new THREE.DirectionalLight(0xffffff,2.2); key.position.set(150,260,320); scene.add(key);
+  const fill=new THREE.DirectionalLight(0xffffff,0.8); fill.position.set(-260,120,-80); scene.add(fill);
+  const root=new THREE.Group(); scene.add(root);
+  let ox=0; const anchors=[];
+  for (const m of models){
+    const b=m.grid.bounds();
+    const w=(b.x1-b.x0+1)*S;
+    const shift=ox-b.x0*S;
+    addModel(root, m.grid, shift);
+    anchors.push({x:ox+w/2, y:b.y0*PH, z:((b.z0+b.z1+1)/2)*S, m});
+    ox+=w+(opts.gap||70);
+  }
+  const box=new THREE.Box3().setFromObject(root), c=box.getCenter(new THREE.Vector3());
+  const az=opts.az??0.32, el=opts.el??0.12;
+  const cam=new THREE.OrthographicCamera(-1,1,1,-1,1,5000);
+  cam.position.set(c.x+Math.sin(az)*Math.cos(el)*1500, c.y+Math.sin(el)*1500, c.z+Math.cos(az)*Math.cos(el)*1500);
+  cam.lookAt(c); cam.updateMatrixWorld();
+  const inv=cam.matrixWorldInverse; let mnx=1e9,mxx=-1e9,mny=1e9,mxy=-1e9;
+  for (const px of [box.min.x,box.max.x]) for (const py of [box.min.y,box.max.y]) for (const pz of [box.min.z,box.max.z]){
+    const p=new THREE.Vector3(px,py,pz).applyMatrix4(inv); mnx=Math.min(mnx,p.x); mxx=Math.max(mxx,p.x); mny=Math.min(mny,p.y); mxy=Math.max(mxy,p.y); }
+  // üstte başlık, altta etiket payı
+  const top=90, bottom=opts.bottomPx||150, side=40;
+  const sx=(mxx-mnx)/(Wpx-2*side), sy=(mxy-mny)/(Hpx-top-bottom), s=Math.max(sx,sy);
+  const cxm=(mnx+mxx)/2, cym=(mny+mxy)/2 + (bottom-top)/2*s;
+  cam.left=cxm-Wpx/2*s; cam.right=cxm+Wpx/2*s; cam.top=cym+Hpx/2*s; cam.bottom=cym-Hpx/2*s;
+  // kamera uzayındaki kaydırmayı dünyaya taşı
+  cam.updateProjectionMatrix();
+  renderer.render(scene,cam);
+  for (const a of anchors){
+    const p=new THREE.Vector3(a.x,a.y,a.z).project(cam);
+    const el2=document.createElement('div'); el2.className='lbl';
+    el2.style.left=((p.x+1)/2*Wpx)+'px'; el2.style.top=((1-p.y)/2*Hpx+18)+'px';
+    el2.innerHTML='<b>'+a.m.label+'</b><span>'+(a.m.sub||'')+'</span>';
+    document.getElementById('wrap').appendChild(el2);
+  }
+  document.title='done';
+}
+
+function mm(g){ const b=g.bounds(); return { h: Math.round(((b.y1-b.y0+1)*PH+1.7)/10), w: Math.round((b.x1-b.x0+1)*S/10) }; }
+
+if (sceneName==='faces'){
+  const cur=buildCurrentHead(), s8=buildHead(8,'styl'), s12=buildHead(12,'styl'), s16=buildHead(16,'styl');
+  render('Yüz: bugünkü şablon ve yeni yaklaşımlar', [
+    {grid:cur, label:'Bugünkü', sub:'8 stud kafa, sadece tuğla<br>(sakal doğru algılansa bile)'},
+    {grid:s8,  label:'Yeni · aynı boyut', sub:'8 stud kafa, plakalarla<br>kaş, göz, bıyık, sakal hattı'},
+    {grid:s12, label:'Yeni · büyük kafa', sub:'12 stud kafa<br>burun ve sakal hacimli'},
+    {grid:s16, label:'Yeni · en büyük', sub:'16 stud kafa'},
+  ], {az:0.30, el:0.10, gap:90, bottomPx:150, h:700});
+} else {
+  const f8=buildFigure(8), f12=buildFigure(12), f16=buildFigure(16);
+  const info=(g)=>{ const d=mm(g); return '~'+d.h+' cm boy · ~'+estimateParts(g)+' parça'; };
+  render('Boyut ve detay seçenekleri (aynı fotoğraftan)', [
+    {grid:f8, label:'Küçük', sub:info(f8)},
+    {grid:f12, label:'Orta', sub:info(f12)},
+    {grid:f16, label:'Büyük', sub:info(f16)},
+  ], {az:0.42, el:0.10, gap:110, bottomPx:130});
+}
+</script></body></html>

@@ -7,8 +7,8 @@ export function Privacy() {
       </p>
       <h2>Fotoğrafın</h2>
       <p>
-        Yüklediğin fotoğraf yalnızca tarayıcında işlenir ve sunucularımıza gönderilmez. Analiz sonucunda yalnızca figürün renk ve stil
-        seçimleri (ör. “saç: kısa, koyu kahve”) kaydedilir. Sipariş sırasında açıkça izin verirsen fotoğrafın küçük bir kopyası, figürünün
+        Yüklediğin fotoğraf yalnızca tarayıcında işlenir ve sunucularımıza gönderilmez. Analiz sonucunda yalnızca figürün renk ve stil seçimleri kaydedilir: örneğin “saç: kısa, koyu kahve”, “kaş: kalın, düz”, “gülümseme: hafif”. Bu seçimler kaba basamaklardan oluşur, yüzünün ölçüsü değildir. Figürünü üretebilmek için siparişinle birlikte saklanır ve sipariş takip sayfasında gösterilmez.
+        Sipariş sırasında açıkça izin verirsen fotoğrafın küçük bir kopyası, figürünün
         doğru hazırlandığını kontrol etmek için siparişinle birlikte saklanır ve sipariş tamamlandıktan sonra silinir.
       </p>
       <h2>İşlenen veriler</h2>

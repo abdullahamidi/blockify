@@ -2,7 +2,8 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { Brick } from '../../engine/packer';
 import { getColor } from '../../engine/palette';
-import { BRICK_H_MM, PLATE_H_MM, STUD_MM } from '../../engine/parts';
+import { STUD_MM } from '../../engine/parts';
+import { brickBox } from './geometry';
 
 export interface ViewerOptions {
   autoRotate?: boolean;
@@ -124,64 +125,82 @@ export class BrickViewer {
   }
 
   setModel(bricks: Brick[], show: ShowOptions = {}): void {
-    // Eski sahneyi temizle (geometri/malzemeler önbellekte kalır)
+    // Eski sahneyi temizle. Kutu/stud geometrileri ve malzemeler önbellekte kalır;
+    // çağrı başına üretilen birleşik kenar geometrileri burada serbest bırakılır.
     for (const child of [...this.group.children]) {
       this.group.remove(child);
       if (child instanceof THREE.InstancedMesh) child.dispose();
+      else if (child instanceof THREE.LineSegments) child.geometry.dispose();
     }
     const visible = bricks.filter((b) => show.upToStep === undefined || b.step <= show.upToStep);
     if (!bricks.length) return;
 
     const hasBase = bricks.some((b) => b.plate);
-    const bottomOf = (layer: number) =>
-      hasBase ? (layer === 0 ? 0 : PLATE_H_MM + (layer - 1) * BRICK_H_MM) : layer * BRICK_H_MM;
 
     let maxX = 0;
     let maxZ = 0;
-    let maxLayer = 0;
+    let totalH = 0;
     for (const b of bricks) {
       maxX = Math.max(maxX, b.x + b.sx);
       maxZ = Math.max(maxZ, b.z + b.sz);
-      maxLayer = Math.max(maxLayer, b.y);
+      const box = brickBox(b, hasBase);
+      totalH = Math.max(totalH, box.bottomMm + box.heightMm);
     }
     const cx = (maxX * STUD_MM) / 2;
     const cz = (maxZ * STUD_MM) / 2;
-    const totalH = bottomOf(maxLayer) + BRICK_H_MM;
 
-    // Hangi hücrelerin üstü kapalı (stud görünmez)
+    // Hangi hücrelerin üstü kapalı (stud görünmez): opak parçaların kapladığı tüm katlar
     const occupied = new Set<string>();
     for (const b of visible) {
       if (getColor(b.color).transparent) continue;
-      for (let z = b.z; z < b.z + b.sz; z++) for (let x = b.x; x < b.x + b.sx; x++) occupied.add(`${x},${b.y},${z}`);
+      const top = b.y + (b.h ?? 1);
+      for (let l = b.y; l < top; l++)
+        for (let z = b.z; z < b.z + b.sz; z++) for (let x = b.x; x < b.x + b.sx; x++) occupied.add(`${x},${l},${z}`);
     }
 
+    // (sx, sz, yükseklik, renk, vurgu) başına tek InstancedMesh
+    const bodies = new Map<string, { sx: number; sz: number; h: number; color: string; hl: boolean; m: THREE.Matrix4[] }>();
     const studsByMat = new Map<THREE.Material, THREE.Matrix4[]>();
-    const m4 = new THREE.Matrix4();
+    const edgeParts: [number[], number[]] = [[], []]; // [normal, vurgulu]
+    const v = new THREE.Vector3();
 
     for (const b of visible) {
-      const h = b.plate ? PLATE_H_MM : BRICK_H_MM;
+      const { bottomMm, heightMm: h } = brickBox(b, hasBase);
       const hl = show.highlightStep !== undefined && b.step === show.highlightStep;
-      const [geo, edges] = this.boxGeo(b.sx, b.sz, h);
-      const mat = this.material(b.color, hl);
-      const mesh = new THREE.Mesh(geo, mat);
       const px = (b.x + b.sx / 2) * STUD_MM - cx;
       const pz = (b.z + b.sz / 2) * STUD_MM - cz;
-      const py = bottomOf(b.y) + h / 2;
-      mesh.position.set(px, py, pz);
-      this.group.add(mesh);
-      const line = new THREE.LineSegments(edges, hl ? this.highlightEdgeMat : this.edgeMat);
-      line.position.copy(mesh.position);
-      this.group.add(line);
+      const py = bottomMm + h / 2;
 
-      const top = bottomOf(b.y) + h + STUD_H / 2 - GAP;
+      const key = `${b.sx}|${b.sz}|${h}|${b.color}|${hl}`;
+      let body = bodies.get(key);
+      if (!body) bodies.set(key, (body = { sx: b.sx, sz: b.sz, h, color: b.color, hl, m: [] }));
+      body.m.push(new THREE.Matrix4().makeTranslation(px, py, pz));
+
+      // Kenarlar: önbellekteki kutu kenarları öteleme ile tek diziye eklenir
+      const pos = this.boxGeo(b.sx, b.sz, h)[1].getAttribute('position');
+      const out = edgeParts[hl ? 1 : 0];
+      for (let i = 0; i < pos.count; i++) {
+        v.fromBufferAttribute(pos, i);
+        out.push(v.x + px, v.y + py, v.z + pz);
+      }
+
+      const topLayer = b.y + (b.h ?? 1);
+      const studY = bottomMm + h + STUD_H / 2 - GAP;
+      const mat = this.material(b.color, hl);
       for (let z = b.z; z < b.z + b.sz; z++)
         for (let x = b.x; x < b.x + b.sx; x++) {
-          if (occupied.has(`${x},${b.y + 1},${z}`)) continue;
-          m4.makeTranslation((x + 0.5) * STUD_MM - cx, top, (z + 0.5) * STUD_MM - cz);
+          if (occupied.has(`${x},${topLayer},${z}`)) continue;
           const list = studsByMat.get(mat) ?? [];
-          list.push(m4.clone());
+          list.push(new THREE.Matrix4().makeTranslation((x + 0.5) * STUD_MM - cx, studY, (z + 0.5) * STUD_MM - cz));
           studsByMat.set(mat, list);
         }
+    }
+
+    for (const body of bodies.values()) {
+      const inst = new THREE.InstancedMesh(this.boxGeo(body.sx, body.sz, body.h)[0], this.material(body.color, body.hl), body.m.length);
+      body.m.forEach((m, i) => inst.setMatrixAt(i, m));
+      inst.instanceMatrix.needsUpdate = true;
+      this.group.add(inst);
     }
     for (const [mat, list] of studsByMat) {
       const inst = new THREE.InstancedMesh(this.studGeo, mat, list.length);
@@ -189,6 +208,12 @@ export class BrickViewer {
       inst.instanceMatrix.needsUpdate = true;
       this.group.add(inst);
     }
+    edgeParts.forEach((arr, i) => {
+      if (!arr.length) return;
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(arr, 3));
+      this.group.add(new THREE.LineSegments(g, i ? this.highlightEdgeMat : this.edgeMat));
+    });
 
     if (!this.fitted) {
       this.fitted = true;

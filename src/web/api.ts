@@ -2,8 +2,17 @@ import type { FigureDesign } from '../engine/figure';
 import type { Brick } from '../engine/packer';
 import type { BomLine } from '../engine/bom';
 import type { ModelStats } from '../engine/index';
-import type { PriceBreakdown } from '../engine/pricing';
-import type { CustomerInfo, Order, OrderStatus, OrderSummary, PublicConfig, PublicOrder } from '../shared/orders';
+import type {
+  CustomerInfo,
+  Order,
+  OrderStatus,
+  OrderSummary,
+  PublicCatalog,
+  PublicConfig,
+  PublicDesign,
+  PublicOrder,
+  QuoteResponse,
+} from '../shared/orders';
 
 export class ApiError extends Error {
   constructor(
@@ -32,8 +41,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 export const api = {
   config: () => request<PublicConfig>('/config'),
+  catalog: () => request<PublicCatalog>('/catalog'),
   quote: (design: FigureDesign) =>
-    request<{ design: FigureDesign; price: PriceBreakdown; stats: ModelStats }>('/quote', {
+    request<QuoteResponse>('/quote', {
       method: 'POST',
       body: JSON.stringify({ design }),
     }),
@@ -50,7 +60,7 @@ export const api = {
   order: (number: string, key: string) =>
     request<PublicOrder>(`/orders/${encodeURIComponent(number)}?k=${encodeURIComponent(key)}`),
   build: (number: string, key: string) =>
-    request<{ number: string; design: FigureDesign; bricks: Brick[]; bom: BomLine[]; stats: ModelStats }>(
+    request<{ number: string; design: PublicDesign; bricks: Brick[]; bom: BomLine[]; stats: ModelStats }>(
       `/orders/${encodeURIComponent(number)}/build?k=${encodeURIComponent(key)}`,
     ),
 };

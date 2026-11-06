@@ -203,7 +203,7 @@ export function extractFeatures(rgba: Uint8ClampedArray, mask: Uint8Array, w: nu
   }
   const beardFrac = beardTotal ? beardHair / beardTotal : 0;
   let facial: FacialHair = 'none';
-  if (beardFrac > 0.3) facial = 'beard';
+  if (beardFrac > 0.3) facial = 'fullBeard';
   else if (beardFrac > 0.1) facial = 'mustache';
   design.facialHair = facial;
   debug.beardFrac = beardFrac;

@@ -1,19 +1,23 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { generateModel } from '../../engine/index';
 import type { BomLine } from '../../engine/bom';
 import type { Brick } from '../../engine/packer';
 import { api } from '../api';
 import { BomTable } from '../components/BomTable';
 import { InteractiveInstructions } from '../components/Instructions';
+import { useCatalog } from '../catalog';
 import { loadDesign } from '../state';
+import { useModel } from '../useModel';
 
 export function BuildGuide({ preview }: { preview?: boolean }) {
   const { number = '' } = useParams();
   const [params] = useSearchParams();
   const key = params.get('k') ?? '';
-  const local = useMemo(() => (preview ? generateModel(loadDesign()) : null), [preview]);
-  const [data, setData] = useState<{ bricks: Brick[]; bom: BomLine[] } | null>(local);
+  const previewDesign = useMemo(loadDesign, []);
+  const catalog = useCatalog();
+  const { model: local } = useModel(previewDesign, preview ? catalog : null);
+  const [fetched, setData] = useState<{ bricks: Brick[]; bom: BomLine[] } | null>(null);
+  const data = preview ? local : fetched;
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -37,7 +41,7 @@ export function BuildGuide({ preview }: { preview?: boolean }) {
           <h1 className="page-title">Montaj kılavuzu</h1>
           <p className="muted">
             {preview ? 'Bu, şu anki tasarımının önizlemesi. ' : `Sipariş ${number}. `}
-            Her adımda bir sıra tuğla yerleştir. Plan üstten görünüştür, figürün önü aşağıda.
+            Her adımda gösterilen katları alttan üste doğru yerleştir. Plan üstten görünüştür, figürün önü aşağıda.
           </p>
         </div>
         {preview && (

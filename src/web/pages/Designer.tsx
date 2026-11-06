@@ -7,16 +7,21 @@ import {
   FACIAL_HAIR_LABELS,
   HAIR_STYLES,
   HAIR_STYLE_LABELS,
+  SIZES,
+  SIZE_LABELS,
   colorsInGroup,
+  enabledColors,
   formatPrice,
-  generateModel,
   getColor,
   type FigureDesign,
 } from '../../engine/index';
 import { analyzePhoto, loadImage, makeThumbnail, preloadSegmenter } from '../analysis/analyzePhoto';
 import { ColorPicker, Segmented, Toggle } from '../components/ColorPicker';
 import { Viewer3D } from '../components/Viewer3D';
+import { useCatalog } from '../catalog';
 import { photoStore, useStoredDesign } from '../state';
+import { useModel } from '../useModel';
+import { useQuote } from '../useQuote';
 
 type Status = 'idle' | 'analyzing' | 'done' | 'error';
 
@@ -34,7 +39,20 @@ export function Designer() {
   const [dragging, setDragging] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
-  const model = useMemo(() => generateModel(design), [design]);
+  const catalog = useCatalog();
+  const { model, busy } = useModel(design, catalog);
+  const { quote, loading: quoteLoading, error: quoteError, retry } = useQuote(design);
+  const open = useMemo(() => (catalog ? new Set(enabledColors(catalog)) : null), [catalog]);
+  const only = (colors: typeof SKIN) => (open ? colors.filter((c) => open.has(c.id)) : colors);
+  const quoteFresh = !!quote && quote.design.size === design.size && !quoteError;
+  const sizeLabels = Object.fromEntries(
+    SIZES.map((s) => [
+      s,
+      quote
+        ? `${SIZE_LABELS[s]} · ~${Math.round(quote.sizes[s].heightMm / 10)} cm · ${formatPrice(quote.sizes[s].total)}`
+        : `${SIZE_LABELS[s]} · …`,
+    ]),
+  ) as Record<(typeof SIZES)[number], string>;
 
   const set = <K extends keyof FigureDesign>(key: K, value: FigureDesign[K]) => setDesign({ ...design, [key]: value });
 
@@ -147,67 +165,85 @@ export function Designer() {
       </div>
 
       <div className="designer-controls">
+        <div className="card controls">
+          <Segmented label="Boyut" value={design.size} options={SIZES} labels={sizeLabels} onChange={(v) => set('size', v)} />
+        </div>
 
         <div className="card controls">
           <h2 className="ctl-title">Yüz</h2>
-          <ColorPicker label="Ten rengi" value={design.skin} colors={SKIN} onChange={(v) => set('skin', v)} />
+          <ColorPicker label="Ten rengi" value={design.skin} colors={only(SKIN)} onChange={(v) => set('skin', v)} />
           <Toggle label="Gözlük" checked={design.glasses} onChange={(v) => set('glasses', v)} />
           {design.glasses && (
-            <ColorPicker label="Çerçeve rengi" value={design.glassesColor} colors={GLASSES} onChange={(v) => set('glassesColor', v)} />
+            <ColorPicker label="Çerçeve rengi" value={design.glassesColor} colors={only(GLASSES)} onChange={(v) => set('glassesColor', v)} />
           )}
         </div>
 
         <div className="card controls">
           <h2 className="ctl-title">Saç ve sakal</h2>
           <Segmented label="Saç modeli" value={design.hairStyle} options={HAIR_STYLES} labels={HAIR_STYLE_LABELS} onChange={(v) => set('hairStyle', v)} />
-          <ColorPicker label="Saç rengi" value={design.hairColor} colors={HAIR} onChange={(v) => set('hairColor', v)} />
+          <ColorPicker label="Saç rengi" value={design.hairColor} colors={only(HAIR)} onChange={(v) => set('hairColor', v)} />
           <Segmented label="Sakal / bıyık" value={design.facialHair} options={FACIAL_HAIR} labels={FACIAL_HAIR_LABELS} onChange={(v) => set('facialHair', v)} />
         </div>
 
         <div className="card controls">
           <h2 className="ctl-title">Kıyafet</h2>
-          <ColorPicker label={design.jacket ? 'İçteki üst' : 'Üst'} value={design.shirtColor} colors={CLOTHES} onChange={(v) => set('shirtColor', v)} />
+          <ColorPicker label={design.jacket ? 'İçteki üst' : 'Üst'} value={design.shirtColor} colors={only(CLOTHES)} onChange={(v) => set('shirtColor', v)} />
           <Toggle label="Ceket / hırka" checked={design.jacket} onChange={(v) => set('jacket', v)} />
           {design.jacket && (
-            <ColorPicker label="Ceket rengi" value={design.jacketColor} colors={CLOTHES} onChange={(v) => set('jacketColor', v)} />
+            <ColorPicker label="Ceket rengi" value={design.jacketColor} colors={only(CLOTHES)} onChange={(v) => set('jacketColor', v)} />
           )}
           <Segmented label="Alt" value={design.bottomStyle} options={BOTTOM_STYLES} labels={BOTTOM_STYLE_LABELS} onChange={(v) => set('bottomStyle', v)} />
-          <ColorPicker label="Alt rengi" value={design.bottomColor} colors={CLOTHES} onChange={(v) => set('bottomColor', v)} />
-          <ColorPicker label="Ayakkabı" value={design.shoeColor} colors={CLOTHES} onChange={(v) => set('shoeColor', v)} />
+          <ColorPicker label="Alt rengi" value={design.bottomColor} colors={only(CLOTHES)} onChange={(v) => set('bottomColor', v)} />
+          <ColorPicker label="Ayakkabı" value={design.shoeColor} colors={only(CLOTHES)} onChange={(v) => set('shoeColor', v)} />
         </div>
 
         <div className="card controls">
           <h2 className="ctl-title">Kaide</h2>
           <Toggle label="Figür bir kaide üzerinde dursun" checked={design.base} onChange={(v) => set('base', v)} />
-          {design.base && <ColorPicker label="Kaide rengi" value={design.baseColor} colors={BASE} onChange={(v) => set('baseColor', v)} />}
+          {design.base && <ColorPicker label="Kaide rengi" value={design.baseColor} colors={only(BASE)} onChange={(v) => set('baseColor', v)} />}
         </div>
       </div>
 
       <aside className="designer-preview">
         <div className="card preview-card">
           <div className="preview-stage">
-            <Viewer3D bricks={model.bricks} azimuth={0.5} />
+            {model && <Viewer3D bricks={model.bricks} azimuth={0.5} />}
+            {busy && <div className="preview-busy small muted">Güncelleniyor…</div>}
           </div>
           <div className="stats">
             <div>
-              <b>{model.stats.brickCount}</b>
+              <b>{model?.stats.brickCount ?? '…'}</b>
               <span>parça</span>
             </div>
             <div>
-              <b>{(model.stats.heightMm / 10).toFixed(1)} cm</b>
+              <b>{model ? `${(model.stats.heightMm / 10).toFixed(1)} cm` : '…'}</b>
               <span>boy</span>
             </div>
             <div>
-              <b>{model.stats.steps}</b>
+              <b>{model?.stats.steps ?? '…'}</b>
               <span>adım</span>
             </div>
           </div>
           <div className="price-row">
             <div>
               <span className="muted small">Kargo dahil</span>
-              <div className="price">{formatPrice(model.price.total, model.price.currency)}</div>
+              <div className="price">
+                {quoteError ? (
+                  <button type="button" className="link-muted small" onClick={retry}>
+                    Fiyat alınamadı, tekrar dene
+                  </button>
+                ) : quoteFresh && !quoteLoading ? (
+                  formatPrice(quote.price.total, quote.price.currency)
+                ) : (
+                  '…'
+                )}
+              </div>
             </div>
-            <button className="btn btn-primary btn-lg" onClick={() => navigate('/siparis')} disabled={status === 'analyzing'}>
+            <button
+              className="btn btn-primary btn-lg"
+              onClick={() => navigate('/siparis')}
+              disabled={status === 'analyzing' || !catalog || !quoteFresh || quoteLoading}
+            >
               Siparişe geç
             </button>
           </div>

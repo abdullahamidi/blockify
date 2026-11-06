@@ -405,6 +405,7 @@ button {
   padding: 14px;
 }
 .preview-stage {
+  position: relative;
   height: min(62vh, 560px);
   border-radius: 14px;
   background: radial-gradient(circle at 50% 35%, #fff 0%, #f6f1ea 70%, #efe6da 100%);
@@ -1160,4 +1161,14 @@ select:focus {
   .page {
     padding: 0;
   }
+}
+
+.preview-busy {
+  position: absolute;
+  top: 10px;
+  left: 12px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.85);
+  pointer-events: none;
 }

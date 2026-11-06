@@ -37,7 +37,28 @@ export function buildBom(bricks: Brick[]): BomLine[] {
     }
     line.qty++;
   }
-  const partOrder = ['plate8x8', '2x4', '2x3', '2x2', '1x6', '1x4', '1x3', '1x2', '1x1'];
+  // Kaideler (büyükten küçüğe), tuğlalar, plakalar; her grupta büyükten küçüğe
+  const partOrder = [
+    'plate16x16',
+    'plate8x16',
+    'plate8x8',
+    '2x4',
+    '2x3',
+    '2x2',
+    '1x6',
+    '1x4',
+    '1x3',
+    '1x2',
+    '1x1',
+    'p2x4',
+    'p2x3',
+    'p2x2',
+    'p1x6',
+    'p1x4',
+    'p1x3',
+    'p1x2',
+    'p1x1',
+  ];
   return [...map.values()].sort((a, b) => {
     // İç dolgu en sona, sonra renk adı, sonra büyükten küçüğe parça
     if ((a.color === FILLER_ID) !== (b.color === FILLER_ID)) return a.color === FILLER_ID ? 1 : -1;

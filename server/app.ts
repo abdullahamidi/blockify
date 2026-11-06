@@ -1,20 +1,31 @@
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { existsSync } from 'node:fs';
 import { timingSafeEqual } from 'node:crypto';
-import { ENGINE_VERSION, generateModel } from '../src/engine/index';
+import { ENGINE_VERSION, SIZES, generateModel, priceFor, sanitizeDesign, type FigureSize } from '../src/engine/index';
 import {
   ORDER_STATUSES,
   type Order,
   type OrderStatus,
   type OrderSummary,
+  type PublicCatalog,
   type PublicConfig,
   type PublicOrder,
+  type QuoteResponse,
+  publicDesign,
 } from '../src/shared/orders';
+import { LruCache } from './quoteCache';
+import type { CatalogStore } from './catalogStore';
 import type { config as appConfig } from './config';
 import type { OrderStore } from './store';
 import { ValidationError, parseJpegDataUrl, validateCustomer } from './validate';
 
 type Config = typeof appConfig;
+
+/** Teklif önbelleği kaydı: her boyutun yanıt parçaları ayrı tutulur, yanıt istenen boyuta göre kurulur. */
+interface QuoteEntry {
+  perSize: Record<FigureSize, Pick<QuoteResponse, 'design' | 'price' | 'stats'>>;
+  sizes: QuoteResponse['sizes'];
+}
 
 /** Basit IP başına istek sınırlayıcı */
 function rateLimit(max: number, windowMs: number) {
@@ -38,7 +49,7 @@ function toPublic(o: Order): PublicOrder {
     number: o.number,
     createdAt: o.createdAt,
     status: o.status,
-    design: o.design,
+    design: publicDesign(o.design),
     price: { ...o.price, partsCost: 0 },
     stats: o.stats,
     history: o.history.map(({ at, status }) => ({ at, status })),
@@ -69,13 +80,14 @@ function safeEqual(a: string, b: string): boolean {
   return ab.length === bb.length && timingSafeEqual(ab, bb);
 }
 
-export function createApp(store: OrderStore, config: Config, staticDir?: string) {
+export function createApp(store: OrderStore, catalogs: CatalogStore, config: Config, staticDir?: string) {
   const app = express();
   app.disable('x-powered-by');
   if (config.trustProxy) app.set('trust proxy', 1);
   app.use(express.json({ limit: '1mb' }));
 
   const api = express.Router();
+  const quoteCache = new LruCache<QuoteEntry>(200);
 
   api.get('/health', (_req, res) => {
     res.json({ ok: true });
@@ -93,10 +105,36 @@ export function createApp(store: OrderStore, config: Config, staticDir?: string)
     res.json(body);
   });
 
-  // Fiyat teklifi: tasarım sunucuda yeniden üretilir, istemcinin hesabına güvenilmez
+  api.get('/catalog', (_req, res) => {
+    const body: PublicCatalog = { version: catalogs.version(), enabled: [...catalogs.get().enabled] };
+    res.json(body);
+  });
+
+  // Fiyat teklifi: tasarım sunucuda yeniden üretilir, istemcinin hesabına güvenilmez.
+  // Üç boyutun da fiyatı döner; iç maliyet (partsCost) gizlenir.
+  // Her boyut, siparişte olacağı gibi kataloğa kendi boyutuyla uydurulur (ör. kaide plakası yalnızca
+  // bazı boyutlarda açıksa). Böylece boyut etiketindeki fiyat, o boyut seçilince alınan fiyatla aynıdır.
   api.post('/quote', rateLimit(120, 60_000), (req, res) => {
-    const model = generateModel(req.body?.design, config.pricing);
-    res.json({ design: model.design, price: { ...model.price, partsCost: 0 }, stats: model.stats });
+    const catalog = catalogs.get();
+    const norm = sanitizeDesign(req.body?.design);
+    const { size: _size, ...rest } = norm;
+    // Anahtarda boyut yok: boyut değiştirmek de önbellekten döner.
+    const cacheKey = `${catalogs.version()}|${JSON.stringify(rest)}`;
+    let entry = quoteCache.get(cacheKey);
+    if (!entry) {
+      const perSize = {} as QuoteEntry['perSize'];
+      const sizes = {} as QuoteResponse['sizes'];
+      for (const size of SIZES) {
+        const m = generateModel({ ...norm, size }, catalog);
+        const price = priceFor(m.bom, config.pricing);
+        perSize[size] = { design: m.design, price: { ...price, partsCost: 0 }, stats: m.stats };
+        sizes[size] = { total: price.total, heightMm: m.stats.heightMm, brickCount: m.stats.brickCount };
+      }
+      entry = { perSize, sizes };
+      quoteCache.set(cacheKey, entry);
+    }
+    const body: QuoteResponse = { ...entry.perSize[norm.size], sizes: entry.sizes };
+    res.json(body);
   });
 
   api.post('/orders', rateLimit(10, 10 * 60_000), async (req, res, next) => {
@@ -108,7 +146,8 @@ export function createApp(store: OrderStore, config: Config, staticDir?: string)
       const photoConsent = body.consent?.photo === true;
       const photo = photoConsent ? parseJpegDataUrl(body.photo) : null;
 
-      const model = generateModel(body.design, config.pricing);
+      const model = generateModel(body.design, catalogs.get());
+      const price = priceFor(model.bom, config.pricing);
       if (model.stats.looseBricks > 0) throw new ValidationError('Bu tasarım üretilemiyor, lütfen değiştirin');
 
       const now = new Date().toISOString();
@@ -120,7 +159,7 @@ export function createApp(store: OrderStore, config: Config, staticDir?: string)
         status: 'awaiting_payment',
         engineVersion: ENGINE_VERSION,
         design: model.design,
-        price: model.price,
+        price,
         stats: model.stats,
         bom: model.bom,
         bricks: model.bricks,
@@ -155,7 +194,7 @@ export function createApp(store: OrderStore, config: Config, staticDir?: string)
   // Montaj kılavuzu için parça yerleşimi
   api.get('/orders/:number/build', (req, res) => {
     const o = findWithKey(req, res);
-    if (o) res.json({ number: o.number, design: o.design, bricks: o.bricks, bom: o.bom, stats: o.stats });
+    if (o) res.json({ number: o.number, design: publicDesign(o.design), bricks: o.bricks, bom: o.bom, stats: o.stats });
   });
 
   // ---- Yönetim ----

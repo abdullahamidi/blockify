@@ -1,5 +1,7 @@
 import type { Brick } from '../../engine/packer';
 import { getColor } from '../../engine/palette';
+import { getPart } from '../../engine/parts';
+import { occupies } from '../viewer/geometry';
 
 interface Props {
   bricks: Brick[];
@@ -27,7 +29,7 @@ export function LayerMap({ bricks, items, refLayer, cell = 22, dashed }: Props) 
   const pad = 4;
   const width = w * cell + pad * 2;
   const height = d * cell + pad * 2 + 16;
-  const ref = refLayer === undefined ? [] : bricks.filter((b) => b.y === refLayer && !items.includes(b));
+  const ref = refLayer === undefined ? [] : bricks.filter((b) => occupies(b, refLayer) && !items.includes(b));
   const rect = (b: Brick) => ({ x: pad + b.x * cell, y: pad + b.z * cell, w: b.sx * cell, h: b.sz * cell });
 
   return (
@@ -64,7 +66,7 @@ export function LayerMap({ bricks, items, refLayer, cell = 22, dashed }: Props) 
               className="brick-rect"
               strokeDasharray={dashed ? '4 3' : undefined}
             />
-            {!b.plate && studs}
+            {getPart(b.part).kind !== 'baseplate' && studs}
           </g>
         );
       })}

@@ -10,12 +10,14 @@ import { BuildGuide } from './pages/BuildGuide';
 import { Admin } from './pages/Admin';
 import { Privacy } from './pages/Privacy';
 import { NotFound } from './pages/NotFound';
+import { DevFigure } from './pages/DevFigure';
 import './styles.css';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <BrowserRouter>
       <Routes>
+        {import.meta.env.DEV && <Route path="gelistirici/figur" element={<DevFigure />} />}
         <Route element={<Layout />}>
           <Route index element={<Home />} />
           <Route path="tasarla" element={<Designer />} />

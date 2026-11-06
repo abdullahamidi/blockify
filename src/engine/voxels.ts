@@ -63,6 +63,16 @@ export class VoxelGrid {
         for (let x = x0; x <= x1; x++) if (this.get(x, y, z) !== EMPTY) this.set(x, y, z, code);
   }
 
+  /** Kaynaktaki dolu hücreleri (dx, dy, dz) kaydırmasıyla kopyalar; boş hücreler hedefe dokunmaz. */
+  paste(src: VoxelGrid, dx: number, dy: number, dz: number): void {
+    for (let y = 0; y < src.h; y++)
+      for (let z = 0; z < src.d; z++)
+        for (let x = 0; x < src.w; x++) {
+          const c = src.cells[src.idx(x, y, z)];
+          if (c !== EMPTY) this.set(x + dx, y + dy, z + dz, c);
+        }
+  }
+
   count(): number {
     let n = 0;
     for (const c of this.cells) if (c !== EMPTY) n++;
@@ -96,4 +106,19 @@ export class VoxelGrid {
         }
     return out;
   }
+}
+
+/** Önden görünüm: her (x, y) için en öndeki (en büyük z) dolu hücrenin kodu, boşsa EMPTY. İndeks `x + w * y`. */
+export function frontView(g: VoxelGrid): Int16Array {
+  const out = new Int16Array(g.w * g.h);
+  for (let y = 0; y < g.h; y++)
+    for (let x = 0; x < g.w; x++)
+      for (let z = g.d - 1; z >= 0; z--) {
+        const c = g.cells[g.idx(x, y, z)];
+        if (c !== EMPTY) {
+          out[x + g.w * y] = c;
+          break;
+        }
+      }
+  return out;
 }

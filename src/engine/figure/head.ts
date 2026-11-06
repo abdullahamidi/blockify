@@ -61,6 +61,62 @@ function browRaise(level: number, t: number): number {
   return 0;
 }
 
+/** Bandın içine düşen satırların [alt, üst] aralığı; hiçbiri düşmezse `near`'a en yakın satır (en yakın örnek kuralı). */
+function bandRowsOf(H: number, inBand: (v: number) => boolean, near: number): [number, number] {
+  let lo = -1;
+  let hi = -1;
+  for (let y = 0; y < H; y++)
+    if (inBand((y + 0.5) / H)) {
+      if (lo < 0) lo = y;
+      hi = y;
+    }
+  const n = Math.round(near * H - 0.5);
+  return lo < 0 ? [n, n] : [lo, hi];
+}
+
+/** Gözün satır aralığı ve (büyük boyutta) iris sütunu. */
+function eyeGeometry(design: FigureDesign, W: number, H: number) {
+  const hh = EYE_HALF_HEIGHT[design.expression.eyeOpen];
+  const eyeHeight = faceValue(design, 'eyeHeight');
+  const eyeSpacing = faceValue(design, 'eyeSpacing');
+  const [eyeLo, eyeHi] = bandRowsOf(H, (v) => Math.abs(v - eyeHeight) <= hh, eyeHeight);
+  const irisCol = Math.min(W / 2, Math.max(1, Math.round((eyeSpacing * W + 1) / 2)));
+  return { eyeLo, eyeHi, irisCol };
+}
+
+/** Bir (x, y) ön hücresi göz mü: 'black' | 'white' | null. Göz hücresi çizimi facePainter ile aynı kuraldır. */
+function eyeColorAt(design: FigureDesign, W: number, H: number, x: number, y: number): 'black' | 'white' | null {
+  const { eyeLo, eyeHi, irisCol } = eyeGeometry(design, W, H);
+  const eyeSpacing = faceValue(design, 'eyeSpacing');
+  const eyeWidth = faceValue(design, 'eyeWidth');
+  const cx = (W + 1) / 2;
+  const de = Math.abs(Math.abs((x - cx) / (W / 2)) - eyeSpacing);
+  const col = Math.abs(x - cx) + 0.5;
+  if (y < eyeLo || y > eyeHi || de > eyeWidth) return null;
+  if (W >= 12) return de <= 0.45 * eyeWidth || col === irisCol ? 'black' : 'white';
+  return de <= 0.6 * eyeWidth ? 'black' : null;
+}
+
+/** Gözün çizildiği (x, y) ön hücreleri (x ∈ [1, W]). Gözlük gibi sonradan eklenenler gözü kapatmasın diye. */
+export function eyeCells(design: FigureDesign): { x: number; y: number }[] {
+  const { W, H } = headDims(design.size);
+  const out: { x: number; y: number }[] = [];
+  for (let y = 0; y < H; y++)
+    for (let x = 1; x <= W; x++) if (eyeColorAt(design, W, H, x, y)) out.push({ x, y });
+  return out;
+}
+
+/** `eyeCells` sonucu "x,y" anahtarlı küme olarak. */
+export function eyeCellsOf(design: FigureDesign): Set<string> {
+  return new Set(eyeCells(design).map((e) => `${e.x},${e.y}`));
+}
+
+/** Gözün orta satırı: eyeHeight'a en yakın satır. */
+export function eyeCenterRow(design: FigureDesign): number {
+  const { H } = headDims(design.size);
+  return Math.round(faceValue(design, 'eyeHeight') * H - 0.5);
+}
+
 /**
  * Ön yüze bakan bir hücrenin rengini veren fonksiyonu kurar. Öncelik: ağız (en son çizilir, sakal kapatmaz),
  * göz (kapalı göz çizilmez), kaş, göz kapağı, burun altı, yüz kılı (BEARD), taban rengi.
@@ -71,27 +127,16 @@ function facePainter(design: FigureDesign, W: number, H: number, k: Codes, isFac
   const [browHeight, browTilt, browThickness, browGap] = [f('browHeight'), f('browTilt'), f('browThickness'), f('browGap')];
   const [eyeHeight, eyeSpacing, eyeWidth] = [f('eyeHeight'), f('eyeSpacing'), f('eyeWidth')];
   const [noseBottom, noseWidth, mouthHeight, mouthWidth] = [f('noseBottom'), f('noseWidth'), f('mouthHeight'), f('mouthWidth')];
-  const { smile, browRaiseL, browRaiseR, eyeOpen } = design.expression;
+  const { smile, browRaiseL, browRaiseR } = design.expression;
   const big = W >= 12;
   const cx = (W + 1) / 2;
   // En yakın örnek kuralı: tasarımdaki bir hat, bandına hiçbir satır/sütun merkezi düşmediği için kaybolmaz.
   // Bant simetrik olduğundan "bant ∪ en yakın satır/sütun" bu kuralla aynıdır.
   const nearestRow = (v: number) => Math.round(v * H - 0.5);
+  const bandRows = (inBand: (v: number) => boolean, near: number): [number, number] => bandRowsOf(H, inBand, near);
   const colU = (col: number) => (col - 0.5) / (W / 2); // col: merkezden 1, 2, … (W/2) numaralı sütun
-  const bandRows = (inBand: (v: number) => boolean, near: number): [number, number] => {
-    let lo = -1;
-    let hi = -1;
-    for (let y = 0; y < H; y++)
-      if (inBand((y + 0.5) / H)) {
-        if (lo < 0) lo = y;
-        hi = y;
-      }
-    return lo < 0 ? [nearestRow(near), nearestRow(near)] : [lo, hi];
-  };
 
-  const hh = EYE_HALF_HEIGHT[eyeOpen];
-  const [eyeLo, eyeHi] = bandRows((v) => Math.abs(v - eyeHeight) <= hh, eyeHeight);
-  const irisCol = Math.min(W / 2, Math.max(1, Math.round((eyeSpacing * W + 1) / 2)));
+  const { eyeLo, eyeHi, irisCol } = eyeGeometry(design, W, H);
   const [lineLo, lineHi] = bandRows((v) => v >= mouthHeight && v < mouthHeight + 0.028, mouthHeight);
   const mustacheBottom = mouthHeight + 0.028;
   const [mustLo, mustHi] = bandRows((v) => v >= mustacheBottom && v < noseBottom, (mustacheBottom + noseBottom) / 2);

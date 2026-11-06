@@ -1,36 +1,30 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useMemo, useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { formatPrice, generateModel } from '../../engine/index';
-import type { PriceBreakdown } from '../../engine/pricing';
+import { formatPrice } from '../../engine/index';
 import type { CustomerInfo } from '../../shared/orders';
 import { ApiError, api } from '../api';
 import { Viewer3D } from '../components/Viewer3D';
+import { useCatalog } from '../catalog';
 import { clearDraft, loadDesign, photoStore } from '../state';
+import { useModel } from '../useModel';
+import { useQuote } from '../useQuote';
 
 const EMPTY: CustomerInfo = { name: '', email: '', phone: '', address: '', district: '', city: '', postalCode: '', note: '' };
 
 export function Checkout() {
   const design = useMemo(loadDesign, []);
-  const model = useMemo(() => generateModel(design), [design]);
+  const catalog = useCatalog();
+  const { model } = useModel(design, catalog);
+  const { quote, error: quoteError } = useQuote(design);
   const photo = useMemo(() => photoStore.get(), []);
   const [customer, setCustomer] = useState<CustomerInfo>(EMPTY);
   const [kvkk, setKvkk] = useState(false);
   const [sharePhoto, setSharePhoto] = useState(false);
   const [error, setError] = useState<{ message: string; field?: string } | null>(null);
   const [sending, setSending] = useState(false);
-  const [serverPrice, setServerPrice] = useState<PriceBreakdown | null>(null);
   const navigate = useNavigate();
 
-  useEffect(() => {
-    // Fiyatın kesin hali sunucuda hesaplanır
-    api
-      .quote(design)
-      .then((q) => setServerPrice(q.price))
-      .catch(() => undefined);
-  }, [design]);
-
-  const price = serverPrice ?? model.price;
-  const total = price.total;
+  const price = quote && quote.design.size === design.size ? quote.price : null;
   const field = (k: keyof CustomerInfo) => ({
     value: customer[k],
     onChange: (e: { target: { value: string } }) => setCustomer({ ...customer, [k]: e.target.value }),
@@ -140,8 +134,14 @@ export function Checkout() {
               {error.message}
             </p>
           )}
-          <button className="btn btn-primary btn-lg block" disabled={sending}>
-            {sending ? 'Gönderiliyor…' : `Siparişi ver · ${formatPrice(total, price.currency)}`}
+          <button className="btn btn-primary btn-lg block" disabled={sending || !price}>
+            {sending
+              ? 'Gönderiliyor…'
+              : price
+                ? `Siparişi ver · ${formatPrice(price.total, price.currency)}`
+                : quoteError
+                  ? 'Fiyat alınamadı'
+                  : 'Hesaplanıyor…'}
           </button>
         </form>
       </div>
@@ -149,7 +149,7 @@ export function Checkout() {
       <aside className="checkout-summary">
         <div className="card">
           <div className="summary-stage">
-            <Viewer3D bricks={model.bricks} autoRotate azimuth={0.4} />
+            {model && <Viewer3D bricks={model.bricks} autoRotate azimuth={0.4} />}
           </div>
           <Link to="/tasarla" className="small link-muted">
             ← Tasarımı düzenle
@@ -157,26 +157,26 @@ export function Checkout() {
           <table className="price-table">
             <tbody>
               <tr>
-                <td>Parçalar ({model.stats.brickCount} adet)</td>
-                <td>{formatPrice(price.parts, price.currency)}</td>
+                <td>Parçalar ({quote?.stats.brickCount ?? '…'} adet)</td>
+                <td>{price ? formatPrice(price.parts, price.currency) : 'Hesaplanıyor…'}</td>
               </tr>
               <tr>
                 <td>Tasarım ve montaj kılavuzu</td>
-                <td>{formatPrice(price.designFee, price.currency)}</td>
+                <td>{price ? formatPrice(price.designFee, price.currency) : '…'}</td>
               </tr>
               <tr>
                 <td>Paketleme</td>
-                <td>{formatPrice(price.packaging, price.currency)}</td>
+                <td>{price ? formatPrice(price.packaging, price.currency) : '…'}</td>
               </tr>
               <tr>
                 <td>Kargo</td>
-                <td>{formatPrice(price.shipping, price.currency)}</td>
+                <td>{price ? formatPrice(price.shipping, price.currency) : '…'}</td>
               </tr>
             </tbody>
             <tfoot>
               <tr>
                 <td>Toplam</td>
-                <td>{formatPrice(total, price.currency)}</td>
+                <td>{price ? formatPrice(price.total, price.currency) : '…'}</td>
               </tr>
             </tfoot>
           </table>

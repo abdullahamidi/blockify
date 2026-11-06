@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { catalogKey, createCatalog, defaultCatalog, footprints, isEnabled } from './catalog';
-import { packBricks, type Brick } from './packer';
+import { betterPacking, packBricks, type Brick } from './packer';
 import { FILLER_ID, PALETTE } from './palette';
 import { getPart } from './parts';
 import { EMPTY, VoxelGrid, WILDCARD, colorCode, colorIdFromCode } from './voxels';
@@ -138,6 +138,18 @@ describe('packBricks', () => {
     const above = r.bricks.find((b) => b.y === 4 && b.x <= 3 && b.x + b.sx > 3)!;
     expect(lone.hanging).toBe(true);
     expect(lone.step).toBe(above.step);
+  });
+
+  it('onarım seçimi önce kopuk parça sayısına bakar', () => {
+    // Bağlı yalnız-plaka döşeme, bir parçası kopuk kalmış tuğlalı döşemeden her zaman iyidir (maliyeti düşük olsa da).
+    const connected = { total: 2102, mainSize: 2102, components: 1, weak: 0 };
+    const oneLoose = { total: 976, mainSize: 975, components: 2, weak: 0 };
+    expect(betterPacking(connected, oneLoose)).toBe(true);
+    expect(betterPacking(oneLoose, connected)).toBe(false);
+    // Kopuk sayısı eşitse düşük maliyet (az parça) kazanır
+    const small = { total: 976, mainSize: 976, components: 1, weak: 40 };
+    expect(betterPacking(small, connected)).toBe(true);
+    expect(betterPacking(connected, small)).toBe(false);
   });
 
   it('katalogda karşılığı olmayan renkte hata verir', () => {

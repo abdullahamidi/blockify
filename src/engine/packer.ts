@@ -338,8 +338,21 @@ function analyze(courses: Course[], size: number): Analysis {
   return { components: sizes.size, mainSize, looseCourses, weak, total };
 }
 
-function cost(a: Analysis): number {
+/** Seçimde kullanılan analiz alanları */
+export type PackingScore = Pick<Analysis, 'components' | 'mainSize' | 'weak' | 'total'>;
+
+function cost(a: PackingScore): number {
   return (a.total - a.mainSize) * 1000 + a.components * 100 + a.total * 1 + a.weak * 0.5;
+}
+
+/**
+ * Onarılmış iki döşemeden `a`, `b`den iyi mi? Önce kopuk parça sayısı, eşitse maliyet: kopukluk cezası
+ * L boyutundaki parça farkını aşmaz, bu yüzden yalnız maliyete bakmak bağlı modeli kopuk olanla değiştirebilir.
+ */
+export function betterPacking(a: PackingScore, b: PackingScore): boolean {
+  const looseA = a.total - a.mainSize;
+  const looseB = b.total - b.mainSize;
+  return looseA < looseB || (looseA === looseB && cost(a) < cost(b));
 }
 
 // ---------- Ana fonksiyon ----------
@@ -379,13 +392,13 @@ export function packBricks(grid: VoxelGrid, catalog: Catalog, attempts = 12): Pa
   }
   if (!best) throw new Error('En az bir deneme gerekir');
 
-  // Kopukluk cezası parça sayısından çok büyüktür: onarılabilir tek kopuk parçası olan tuğlalı döşeme,
+  // Onarımdan önceki seçimde kopukluk cezası yüzünden onarılabilir tek kopuk parçası olan tuğlalı döşeme,
   // iki kat parçalı ama bağlı bir yalnız-plaka döşemeye yenilir ve hiç onarılmazdı. Bu yüzden en iyi
-  // tuğlalı deneme de onarılır; seçim onarımdan sonraki maliyetle yapılır.
+  // tuğlalı deneme de onarılır; onarımdan sonra önce kopuk parça sayısı, sonra maliyet karşılaştırılır.
   let result = repair(ctx, best, size);
   if (bestBrick && bestBrick !== best) {
     const alt = repair(ctx, bestBrick, size);
-    if (cost(alt.analysis) < cost(result.analysis)) result = alt;
+    if (betterPacking(alt.analysis, result.analysis)) result = alt;
   }
 
   return {
